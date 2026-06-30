@@ -328,11 +328,13 @@ export class LangfuseClient {
       role: "assistant" as const,
       content: this.getAssistantText(input.messageID),
     };
-    const turn = this.getTurnObservation(input.sessionID, input.parentID);
-    turn?.span.setAttribute(
-      "langfuse.observation.output",
-      JSON.stringify(output),
-    );
+    if (input.mode !== "compaction") {
+      const turn = this.getTurnObservation(input.sessionID, input.parentID);
+      turn?.span.setAttribute(
+        "langfuse.observation.output",
+        JSON.stringify(output),
+      );
+    }
     const step = this.traceState.activeGenerationSteps.get(input.sessionID);
 
     if (step) {

@@ -460,10 +460,8 @@ export class LangfuseClient {
 
     this.traceState.tracedGenerationIds.add(input.messageID);
 
-    const output = {
-      role: "assistant" as const,
-      content: this.getAssistantText(input.messageID),
-    };
+    const text = this.getAssistantText(input.messageID);
+    const output = text ? { text } : undefined;
     const turn = this.getTurnObservation(input.sessionID, input.parentID);
 
     if (input.mode !== "compaction") {

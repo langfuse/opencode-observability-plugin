@@ -58,6 +58,7 @@ type SessionNextEvent =
       properties: {
         sessionID: string;
         timestamp: number;
+        assistantMessageID: string;
         reasoningID: string;
         text: string;
       };
@@ -165,6 +166,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
 
     if (event.type === "message.part.updated") {
       langfuse.rememberAssistantPart(event.properties.part);
+      langfuse.traceReasoningPart(event.properties.part);
     }
 
     if (event.type === "session.next.step.started") {
@@ -200,15 +202,13 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
     }
 
     if (event.type === "session.next.reasoning.ended") {
-      langfuse.traceEvent({
-        id: event.id,
+      langfuse.traceReasoning({
+        reasoningID: event.properties.reasoningID,
         sessionID: event.properties.sessionID,
-        name: "opencode.generation.reasoning",
         timestamp: event.properties.timestamp,
-        output: { text: event.properties.text },
-        metadata: {
-          reasoningID: event.properties.reasoningID,
-        },
+        text: event.properties.text,
+        messageID: event.properties.assistantMessageID,
+        source: "session.next.reasoning.ended",
       });
     }
 

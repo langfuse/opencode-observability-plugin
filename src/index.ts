@@ -100,7 +100,8 @@ const loadLangfuseCredentials = Effect.gen(function* () {
     return {
       publicKey,
       secretKey,
-      baseUrl: process.env.LANGFUSE_BASEURL,
+      // Prefer the canonical name while retaining the legacy name for semver compatibility.
+      baseUrl: process.env.LANGFUSE_BASE_URL ?? process.env.LANGFUSE_BASEURL,
       environment: process.env.LANGFUSE_ENVIRONMENT,
       userId: process.env.LANGFUSE_USER_ID,
     } satisfies LangfuseCredentials;
@@ -281,6 +282,8 @@ const main = Effect.gen(function* () {
 
     const baseUrl =
       credentials.baseUrl ??
+      // Prefer the canonical name while retaining the legacy name for semver compatibility.
+      process.env.LANGFUSE_BASE_URL ??
       process.env.LANGFUSE_BASEURL ??
       "https://cloud.langfuse.com";
 

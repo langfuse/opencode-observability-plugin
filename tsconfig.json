@@ -4,6 +4,7 @@
     "declarationMap": true,
     "sourceMap": true,
     "strict": true,
+    "types": ["node"],
     "outDir": "dist",
     "rootDir": "src"
   },

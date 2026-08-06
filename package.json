@@ -48,8 +48,8 @@
   },
   "devDependencies": {
     "@langfuse/otel": "^5.4.1",
-    "@opentelemetry/sdk-node": "^0.218.0",
     "@opentelemetry/sdk-trace-base": "^2.7.1",
+    "@opentelemetry/sdk-trace-node": "^2.7.1",
     "@types/node": "^26.1.2",
     "effect": "^3.21.2",
     "prettier": "^3.8.3",

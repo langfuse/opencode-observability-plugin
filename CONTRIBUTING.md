@@ -28,4 +28,4 @@ Check formatting:
 pnpm run format:check
 ```
 
-The TypeScript compiler writes build output to `dist/`. Do not edit generated files in `dist/` by hand.
+tsdown bundles the plugin and its runtime dependencies into `dist/index.js`. Do not edit generated files in `dist/` by hand.

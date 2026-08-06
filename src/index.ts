@@ -23,6 +23,7 @@ type SessionNextEvent =
       properties: {
         sessionID: string;
         timestamp: number;
+        assistantMessageID?: string;
         agent: string;
         model: NonNullable<ActiveGenerationStep["model"]>;
         snapshot?: string;
@@ -39,7 +40,21 @@ type SessionNextEvent =
       properties: {
         sessionID: string;
         timestamp: number;
+        assistantMessageID?: string;
         error: { message: string };
+      };
+    }
+  | {
+      id: string;
+      type: "session.next.tool.called";
+      properties: {
+        sessionID: string;
+        timestamp: number;
+        assistantMessageID?: string;
+        callID: string;
+        tool: string;
+        input: Record<string, unknown>;
+        provider: { executed: boolean; metadata?: unknown };
       };
     }
   | {
@@ -183,6 +198,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
     if (event.type === "session.next.step.started") {
       langfuse.startActiveGenerationStep({
         sessionID: event.properties.sessionID,
+        assistantMessageID: event.properties.assistantMessageID,
         agent: event.properties.agent,
         model: event.properties.model,
         started: event.properties.timestamp,
@@ -194,8 +210,19 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
       langfuse.traceFailedGenerationStep({
         id: event.id,
         sessionID: event.properties.sessionID,
+        assistantMessageID: event.properties.assistantMessageID,
         completed: event.properties.timestamp,
         error: event.properties.error,
+      });
+    }
+
+    if (
+      event.type === "session.next.tool.called" &&
+      event.properties.assistantMessageID
+    ) {
+      langfuse.rememberToolCall({
+        callID: event.properties.callID,
+        messageID: event.properties.assistantMessageID,
       });
     }
 
@@ -239,7 +266,22 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
     if (event.type === "message.updated") {
       const message = event.properties.info;
 
-      if (message.role !== "assistant" || !message.time.completed) {
+      if (message.role !== "assistant") {
+        return;
+      }
+
+      langfuse.startActiveGenerationStep({
+        sessionID: message.sessionID,
+        assistantMessageID: message.id,
+        agent: message.mode,
+        model: {
+          id: message.modelID,
+          providerID: message.providerID,
+        },
+        started: message.time.created,
+      });
+
+      if (!message.time.completed) {
         return;
       }
 

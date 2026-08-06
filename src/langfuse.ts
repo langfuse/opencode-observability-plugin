@@ -35,11 +35,12 @@ export class LangfuseClient {
     this.traceState.abortedSessions.clear();
     this.traceState.tracedEventIds.clear();
     this.traceState.tracedReasoningIds.clear();
-    this.traceState.pendingReasoningPartsByMessageId.clear();
     this.traceState.generationSpansByMessageId.clear();
     this.traceState.activeGenerationStepsByMessageId.clear();
     this.traceState.toolMessageIdsByCallId.clear();
     this.traceState.generationParentSpans.clear();
+    this.traceState.generationInputsBySession.clear();
+    this.traceState.toolResultSourceMessageIdsBySession.clear();
     this.traceState.turnObservationsByMessageId.clear();
     this.traceState.latestTurnObservationsBySession.clear();
     this.traceState.finalizedToolCallIds.clear();
@@ -166,14 +167,12 @@ export class LangfuseClient {
     this.withObservationParent(input.sessionID, startEvent);
   }
 
-  traceReasoning(input: {
+  rememberReasoning(input: {
     reasoningID: string;
     sessionID: string;
     timestamp: number;
     text: string;
     messageID?: string;
-    source: string;
-    parentSpan?: ApiSpan;
   }) {
     if (!input.text.trim()) {
       return;
@@ -187,30 +186,22 @@ export class LangfuseClient {
 
     this.traceState.tracedReasoningIds.add(reasoningTraceKey);
 
-    const parentSpan =
-      input.parentSpan ??
-      (input.messageID
-        ? this.traceState.generationSpansByMessageId.get(input.messageID)
-        : undefined);
+    if (!input.messageID) {
+      return;
+    }
 
-    const generationParentSpan =
-      parentSpan ??
-      this.traceState.activeGenerationSteps.get(input.sessionID)?.span ??
-      this.traceState.generationParentSpans.get(input.sessionID);
-
-    this.traceEvent({
-      id: `reasoning:${reasoningTraceKey}`,
+    const parts =
+      this.traceState.assistantParts.get(input.messageID) ??
+      new Map<string, MessagePart>();
+    parts.set(input.reasoningID, {
+      id: input.reasoningID,
       sessionID: input.sessionID,
-      name: "opencode.generation.reasoning",
-      timestamp: input.timestamp,
-      output: { text: input.text },
-      metadata: {
-        reasoningID: input.reasoningID,
-        messageID: input.messageID,
-        source: input.source,
-      },
-      parentSpan: generationParentSpan,
+      messageID: input.messageID,
+      type: "reasoning",
+      text: input.text,
+      time: { start: input.timestamp, end: input.timestamp },
     });
+    this.traceState.assistantParts.set(input.messageID, parts);
   }
 
   traceReasoningPart(part: MessagePart) {
@@ -220,31 +211,12 @@ export class LangfuseClient {
       return;
     }
 
-    const generationSpan =
-      this.traceState.generationSpansByMessageId.get(part.messageID) ??
-      this.traceState.activeGenerationSteps.get(part.sessionID)?.span ??
-      this.traceState.generationParentSpans.get(part.sessionID);
-
-    if (!generationSpan) {
-      const pending =
-        this.traceState.pendingReasoningPartsByMessageId.get(part.messageID) ??
-        new Map<string, CompletedReasoningPart>();
-      pending.set(part.id, part);
-      this.traceState.pendingReasoningPartsByMessageId.set(
-        part.messageID,
-        pending,
-      );
-      return;
-    }
-
-    this.traceReasoning({
+    this.rememberReasoning({
       reasoningID: part.id,
       sessionID: part.sessionID,
       timestamp: completed,
       text: part.text,
       messageID: part.messageID,
-      source: "message.part.updated",
-      parentSpan: generationSpan,
     });
   }
 
@@ -357,12 +329,19 @@ export class LangfuseClient {
       return;
     }
 
+    const generationInput = this.consumeGenerationInput(input.sessionID);
+
     this.withTurnParent(input.sessionID, undefined, () => {
       const span = this.traceState.tracer.startSpan("opencode.generation", {
         attributes: {
           "langfuse.observation.type": "generation",
           "session.id": input.sessionID,
           "langfuse.observation.model.name": input.model.id,
+          ...(generationInput
+            ? {
+                "langfuse.observation.input": JSON.stringify(generationInput),
+              }
+            : {}),
           "langfuse.observation.metadata": JSON.stringify({
             agent: input.agent,
             providerID: input.model.providerID,
@@ -399,6 +378,7 @@ export class LangfuseClient {
     agent?: string;
     model?: { providerID: string; modelID: string };
     parts: MessagePart[];
+    tools?: ToolDefinition[];
   }) {
     if (
       input.messageID &&
@@ -409,9 +389,9 @@ export class LangfuseClient {
 
     this.traceState.abortedSessions.delete(input.sessionID);
 
-    const formattedInput = {
+    const formattedMessage = {
       role: "user" as const,
-      parts: input.parts.map((part) => {
+      content: input.parts.map((part) => {
         if (part.type === "text") {
           return { type: part.type, text: part.text ?? "" };
         }
@@ -447,6 +427,17 @@ export class LangfuseClient {
         return { type: part.type };
       }),
     };
+    const generationInput = [
+      {
+        ...formattedMessage,
+        ...(input.tools?.length ? { tools: input.tools } : {}),
+      },
+    ];
+
+    this.traceState.generationInputsBySession.set(
+      input.sessionID,
+      generationInput,
+    );
 
     if (input.messageID) {
       this.traceState.tracedMessageIds.add(input.messageID);
@@ -468,7 +459,7 @@ export class LangfuseClient {
         "langfuse.observation.type": "span",
         "langfuse.internal.is_app_root": true,
         "session.id": input.sessionID,
-        "langfuse.observation.input": JSON.stringify(formattedInput),
+        "langfuse.observation.input": JSON.stringify([formattedMessage]),
         "langfuse.observation.metadata": JSON.stringify({
           messageID: input.messageID,
           agent: input.agent,
@@ -501,7 +492,7 @@ export class LangfuseClient {
         attributes: {
           "langfuse.observation.type": "event",
           "session.id": input.sessionID,
-          "langfuse.observation.input": JSON.stringify(formattedInput),
+          "langfuse.observation.input": JSON.stringify([formattedMessage]),
           "langfuse.observation.metadata": JSON.stringify({
             messageID: input.messageID,
             agent: input.agent,
@@ -535,8 +526,32 @@ export class LangfuseClient {
     }
   }
 
-  rememberToolCall(input: { callID: string; messageID: string }) {
+  rememberToolCall(input: {
+    callID: string;
+    messageID: string;
+    sessionID?: string;
+    tool?: string;
+    args?: Record<string, unknown>;
+  }) {
     this.traceState.toolMessageIdsByCallId.set(input.callID, input.messageID);
+
+    if (!input.sessionID || !input.tool || !input.args) {
+      return;
+    }
+
+    const parts =
+      this.traceState.assistantParts.get(input.messageID) ??
+      new Map<string, MessagePart>();
+    parts.set(`tool:${input.callID}`, {
+      id: `tool:${input.callID}`,
+      sessionID: input.sessionID,
+      messageID: input.messageID,
+      type: "tool",
+      callID: input.callID,
+      tool: input.tool,
+      state: { status: "pending", input: input.args, raw: "" },
+    });
+    this.traceState.assistantParts.set(input.messageID, parts);
   }
 
   traceGeneration(input: {
@@ -569,8 +584,7 @@ export class LangfuseClient {
 
     this.traceState.tracedGenerationIds.add(input.messageID);
 
-    const text = this.getAssistantText(input.messageID);
-    const output = text ? { text } : undefined;
+    const output = this.getAssistantMessage(input.messageID);
     const turn = this.getTurnObservation(input.sessionID, input.parentID);
 
     if (input.mode !== "compaction") {
@@ -629,8 +643,6 @@ export class LangfuseClient {
         input.messageID,
         step.span,
       );
-      this.flushPendingReasoning(input.messageID, step.span);
-
       step.span.end(new Date(input.completed));
       this.traceState.activeGenerationStepsByMessageId.delete(input.messageID);
 
@@ -645,12 +657,19 @@ export class LangfuseClient {
       return;
     }
 
+    const generationInput = this.consumeGenerationInput(input.sessionID);
+
     this.withTurnParent(input.sessionID, input.parentID, () => {
       const span = this.traceState.tracer.startSpan("opencode.generation", {
         attributes: {
           "langfuse.observation.type": "generation",
           "session.id": input.sessionID,
           "langfuse.observation.model.name": input.modelID,
+          ...(generationInput
+            ? {
+                "langfuse.observation.input": JSON.stringify(generationInput),
+              }
+            : {}),
           "langfuse.observation.output": JSON.stringify(output),
           "langfuse.observation.usage_details": JSON.stringify({
             input: input.tokens.input,
@@ -679,34 +698,8 @@ export class LangfuseClient {
 
       this.traceState.generationParentSpans.set(input.sessionID, span);
       this.traceState.generationSpansByMessageId.set(input.messageID, span);
-      this.flushPendingReasoning(input.messageID, span);
       span.end(new Date(input.completed));
     });
-  }
-
-  private flushPendingReasoning(messageID: string, parentSpan: ApiSpan) {
-    const pending =
-      this.traceState.pendingReasoningPartsByMessageId.get(messageID) ??
-      new Map<string, CompletedReasoningPart>();
-    this.traceState.pendingReasoningPartsByMessageId.delete(messageID);
-
-    for (const part of pending.values()) {
-      const completed = getCompletedReasoningTimestamp(part);
-
-      if (completed === undefined) {
-        continue;
-      }
-
-      this.traceReasoning({
-        reasoningID: part.id,
-        sessionID: part.sessionID,
-        timestamp: completed,
-        text: part.text,
-        messageID: part.messageID,
-        source: "message.part.updated",
-        parentSpan,
-      });
-    }
   }
 
   traceFailedGenerationStep(input: {
@@ -844,9 +837,16 @@ export class LangfuseClient {
     callID: string;
     tool: string;
     args: unknown;
+    messageID?: string;
+    started?: number;
   }) {
-    this.traceState.activeToolObservations.get(input.callID)?.span.end();
-    this.traceState.finalizedToolCallIds.delete(input.callID);
+    if (
+      this.traceState.finalizedToolCallIds.has(input.callID) ||
+      this.traceState.activeToolObservations.has(input.callID)
+    ) {
+      return;
+    }
+
     this.ensureGenerationParent(input.sessionID);
 
     this.withObservationParent(
@@ -862,6 +862,9 @@ export class LangfuseClient {
               tool: input.tool,
             }),
           },
+          ...(input.started === undefined
+            ? {}
+            : { startTime: new Date(input.started) }),
         });
 
         this.traceState.activeToolObservations.set(input.callID, {
@@ -870,7 +873,8 @@ export class LangfuseClient {
           tool: input.tool,
         });
       },
-      this.traceState.toolMessageIdsByCallId.get(input.callID),
+      input.messageID ??
+        this.traceState.toolMessageIdsByCallId.get(input.callID),
     );
   }
 
@@ -881,6 +885,9 @@ export class LangfuseClient {
     args: unknown;
     title: string;
     output: string;
+    messageID?: string;
+    started?: number;
+    completed?: number;
   }) {
     if (this.traceState.finalizedToolCallIds.has(input.callID)) {
       return;
@@ -892,6 +899,8 @@ export class LangfuseClient {
         callID: input.callID,
         tool: input.tool,
         args: input.args,
+        messageID: input.messageID,
+        started: input.started,
       });
     }
 
@@ -913,18 +922,54 @@ export class LangfuseClient {
       }),
     );
 
-    span.end();
+    span.end(
+      input.completed === undefined ? undefined : new Date(input.completed),
+    );
+    this.rememberToolResult({
+      sessionID: input.sessionID,
+      callID: input.callID,
+      tool: input.tool,
+      content: input.output,
+      messageID: input.messageID,
+    });
     this.traceState.activeToolObservations.delete(input.callID);
     this.traceState.finalizedToolCallIds.add(input.callID);
     this.traceState.toolMessageIdsByCallId.delete(input.callID);
   }
 
-  traceToolError(input: { callID: string; error: string; completed: number }) {
+  traceToolError(input: {
+    callID: string;
+    error: string;
+    completed: number;
+    sessionID?: string;
+    tool?: string;
+    args?: unknown;
+    messageID?: string;
+    started?: number;
+  }) {
     if (this.traceState.finalizedToolCallIds.has(input.callID)) {
       return;
     }
 
-    const span = this.traceState.activeToolObservations.get(input.callID)?.span;
+    if (
+      !this.traceState.activeToolObservations.has(input.callID) &&
+      input.sessionID &&
+      input.tool
+    ) {
+      this.traceToolStart({
+        sessionID: input.sessionID,
+        callID: input.callID,
+        tool: input.tool,
+        args: input.args,
+        messageID: input.messageID,
+        started: input.started,
+      });
+    }
+
+    const observation = this.traceState.activeToolObservations.get(
+      input.callID,
+    );
+    const span = observation?.span;
 
     if (!span) {
       return;
@@ -940,6 +985,15 @@ export class LangfuseClient {
     });
     span.recordException({ message: input.error });
     span.end(new Date(input.completed));
+    if (observation) {
+      this.rememberToolResult({
+        sessionID: observation.sessionID,
+        callID: input.callID,
+        tool: input.tool ?? observation.tool,
+        content: input.error,
+        messageID: input.messageID,
+      });
+    }
     this.traceState.activeToolObservations.delete(input.callID);
     this.traceState.finalizedToolCallIds.add(input.callID);
     this.traceState.toolMessageIdsByCallId.delete(input.callID);
@@ -958,10 +1012,16 @@ export class LangfuseClient {
     }
 
     this.withTurnParent(sessionID, undefined, () => {
+      const generationInput = this.consumeGenerationInput(sessionID);
       const span = this.traceState.tracer.startSpan("opencode.generation", {
         attributes: {
           "langfuse.observation.type": "generation",
           "session.id": sessionID,
+          ...(generationInput
+            ? {
+                "langfuse.observation.input": JSON.stringify(generationInput),
+              }
+            : {}),
         },
       });
 
@@ -1011,16 +1071,94 @@ export class LangfuseClient {
       : fn();
   }
 
-  private getAssistantText(messageID: string) {
-    return Array.from(
+  private getAssistantMessage(messageID: string) {
+    const parts = Array.from(
       this.traceState.assistantParts.get(messageID)?.values() ?? [],
-    )
+    );
+    const content = parts
       .filter(
         (part): part is Extract<MessagePart, { type: "text" }> =>
           part.type === "text" && Boolean(part.text),
       )
       .map((part) => part.text)
       .join("");
+    const thinking = parts
+      .filter(
+        (part): part is Extract<MessagePart, { type: "reasoning" }> =>
+          part.type === "reasoning" && Boolean(part.text),
+      )
+      .map((part) => ({ type: "thinking" as const, content: part.text }));
+    const toolCallsById = new Map(
+      parts
+        .filter(
+          (part): part is Extract<MessagePart, { type: "tool" }> =>
+            part.type === "tool",
+        )
+        .map((part) => [part.callID, part] as const),
+    );
+    const toolCalls = Array.from(toolCallsById.values()).map((part) => ({
+      id: part.callID,
+      name: part.tool,
+      arguments: JSON.stringify(part.state.input),
+    }));
+
+    if (!content && thinking.length === 0 && toolCalls.length === 0) {
+      return undefined;
+    }
+
+    return [
+      {
+        role: "assistant" as const,
+        ...(content ? { content } : {}),
+        ...(thinking.length ? { thinking } : {}),
+        ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
+      },
+    ];
+  }
+
+  private consumeGenerationInput(sessionID: string) {
+    const input = this.traceState.generationInputsBySession.get(sessionID);
+    const sourceMessageID =
+      this.traceState.toolResultSourceMessageIdsBySession.get(sessionID);
+    this.traceState.generationInputsBySession.delete(sessionID);
+    this.traceState.toolResultSourceMessageIdsBySession.delete(sessionID);
+
+    if (!sourceMessageID) {
+      return input;
+    }
+
+    return [
+      ...(this.getAssistantMessage(sourceMessageID) ?? []),
+      ...(input ?? []),
+    ];
+  }
+
+  private rememberToolResult(input: {
+    sessionID: string;
+    callID: string;
+    tool: string;
+    content: string;
+    messageID?: string;
+  }) {
+    const messageID =
+      input.messageID ??
+      this.traceState.toolMessageIdsByCallId.get(input.callID);
+    const toolResults =
+      this.traceState.generationInputsBySession.get(input.sessionID) ?? [];
+    toolResults.push({
+      role: "tool",
+      name: input.tool,
+      tool_call_id: input.callID,
+      content: input.content,
+    });
+    this.traceState.generationInputsBySession.set(input.sessionID, toolResults);
+
+    if (messageID) {
+      this.traceState.toolResultSourceMessageIdsBySession.set(
+        input.sessionID,
+        messageID,
+      );
+    }
   }
 
   private getSessionErrorMessage(error: SessionErrorInfo) {
@@ -1050,10 +1188,6 @@ export type LangfuseTraceState = {
   tracedGenerationIds: Set<string>;
   tracedEventIds: Set<string>;
   tracedReasoningIds: Set<string>;
-  pendingReasoningPartsByMessageId: Map<
-    string,
-    Map<string, CompletedReasoningPart>
-  >;
   generationSpansByMessageId: Map<string, ApiSpan>;
   activeGenerationStepsByMessageId: Map<string, ActiveGenerationStep>;
   toolMessageIdsByCallId: Map<string, string>;
@@ -1064,6 +1198,8 @@ export type LangfuseTraceState = {
   finalizedToolCallIds: Set<string>;
   activeGenerationSteps: Map<string, ActiveGenerationStep>;
   generationParentSpans: Map<string, ApiSpan>;
+  generationInputsBySession: Map<string, ChatMlMessage[]>;
+  toolResultSourceMessageIdsBySession: Map<string, string>;
 };
 
 export type MessagePart = Extract<
@@ -1123,8 +1259,25 @@ export type SessionErrorInfo = NonNullable<SessionError>;
 
 export type UserMessageInput = {
   role: "user";
-  parts: FormattedMessagePart[];
+  content: FormattedMessagePart[];
+  tools?: ToolDefinition[];
 };
+
+export type ToolDefinition = {
+  name: string;
+  description?: string;
+  parameters?: Record<string, unknown>;
+};
+
+type ChatMlMessage =
+  | UserMessageInput
+  | {
+      role: "tool";
+      name: string;
+      tool_call_id: string;
+      content: string;
+    }
+  | NonNullable<ReturnType<LangfuseClient["getAssistantMessage"]>>[number];
 
 export type TurnObservation = {
   span: ApiSpan;
@@ -1150,6 +1303,7 @@ export type ActiveGenerationStep = {
   span: ApiSpan;
   started?: number;
   snapshot?: string;
+  input?: ChatMlMessage[];
 };
 
 export class LangfuseClientService extends EffectContext.Tag(
@@ -1211,10 +1365,6 @@ export const createLangfuseClient = (input: {
       tracedGenerationIds: new Set<string>(),
       tracedEventIds: new Set<string>(),
       tracedReasoningIds: new Set<string>(),
-      pendingReasoningPartsByMessageId: new Map<
-        string,
-        Map<string, CompletedReasoningPart>
-      >(),
       generationSpansByMessageId: new Map<string, ApiSpan>(),
       activeGenerationStepsByMessageId: new Map<string, ActiveGenerationStep>(),
       toolMessageIdsByCallId: new Map<string, string>(),
@@ -1225,6 +1375,8 @@ export const createLangfuseClient = (input: {
       finalizedToolCallIds: new Set<string>(),
       activeGenerationSteps: new Map<string, ActiveGenerationStep>(),
       generationParentSpans: new Map<string, ApiSpan>(),
+      generationInputsBySession: new Map<string, ChatMlMessage[]>(),
+      toolResultSourceMessageIdsBySession: new Map<string, string>(),
     };
 
     const processor = new LangfuseSpanProcessor({

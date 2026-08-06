@@ -153,6 +153,8 @@ let plugin: Plugin;
 let collectorStatus = 200;
 let hooksDisposed = false;
 let collectorBaseUrl: string;
+let toolListCalls = 0;
+let toolListShouldFail = false;
 
 const startedAt = 1_750_000_000_000;
 
@@ -357,6 +359,38 @@ const createHooks = async (baseUrl: string) => {
     app: {
       log: () => Promise.resolve(),
     },
+    tool: {
+      list: () => {
+        toolListCalls += 1;
+
+        if (toolListShouldFail) {
+          return Promise.reject(new Error("Tool discovery unavailable"));
+        }
+
+        return Promise.resolve({
+          data: [
+            {
+              id: "read",
+              description: "Read a file",
+              parameters: {
+                type: "object",
+                properties: { path: { type: "string" } },
+                required: ["path"],
+              },
+            },
+            {
+              id: "webfetch",
+              description: "Fetch a URL",
+              parameters: {
+                type: "object",
+                properties: { url: { type: "string" } },
+                required: ["url"],
+              },
+            },
+          ],
+        });
+      },
+    },
   } as unknown as Parameters<Plugin>[0]["client"];
 
   return plugin({ client } as Parameters<Plugin>[0]);
@@ -429,6 +463,8 @@ beforeEach(async () => {
   collectorErrors.length = 0;
   collectorStatus = 200;
   hooksDisposed = false;
+  toolListCalls = 0;
+  toolListShouldFail = false;
   hooks = await createHooks(collectorBaseUrl);
 });
 
@@ -531,6 +567,17 @@ describe.sequential("built plugin", () => {
         "opencode.generation",
       ].sort(),
     );
+    for (const span of spans.filter(
+      (span) =>
+        span.name === "opencode.turn" || span.name === "opencode.message.user",
+    )) {
+      expect(getJsonAttribute(span, "langfuse.observation.input")).toEqual([
+        {
+          role: "user",
+          content: expect.any(Array),
+        },
+      ]);
+    }
 
     const firstGeneration = spans
       .filter((span) => span.name === "opencode.generation")
@@ -557,6 +604,35 @@ describe.sequential("built plugin", () => {
       "langfuse.user.id": "test-user",
       "session.id": sessionID,
     });
+    expect(
+      getJsonAttribute(firstGeneration, "langfuse.observation.input"),
+    ).toEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "Inspect the repository" }],
+        tools: [
+          {
+            name: "read",
+            description: "Read a file",
+            parameters: {
+              type: "object",
+              properties: { path: { type: "string" } },
+              required: ["path"],
+            },
+          },
+          {
+            name: "webfetch",
+            description: "Fetch a URL",
+            parameters: {
+              type: "object",
+              properties: { url: { type: "string" } },
+              required: ["url"],
+            },
+          },
+        ],
+      },
+    ]);
+    expect(toolListCalls).toBe(1);
     expect(
       getJsonAttribute(firstGeneration, "langfuse.observation.usage_details"),
     ).toEqual({
@@ -622,6 +698,19 @@ describe.sequential("built plugin", () => {
         text: "The README contains the project overview.",
       },
     });
+    await emitEvent({
+      id: "nested-observations-read-called",
+      type: "session.next.tool.called",
+      properties: {
+        sessionID,
+        timestamp: started + 260,
+        assistantMessageID,
+        callID: "nested-observations-call",
+        tool: "read",
+        input: { path: "README.md" },
+        provider: { executed: false },
+      },
+    });
     await hooks["tool.execute.before"]?.(
       { sessionID, callID: "nested-observations-call", tool: "read" },
       { args: { path: "README.md" } },
@@ -635,12 +724,29 @@ describe.sequential("built plugin", () => {
       },
       { title: "README.md", output: "# Project", metadata: {} },
     );
+    await emitEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "nested-observations-read-part",
+          sessionID,
+          messageID: assistantMessageID,
+          type: "tool",
+          callID: "nested-observations-call",
+          tool: "read",
+          state: {
+            status: "completed",
+            input: { path: "README.md" },
+            title: "README.md",
+            output: "# Project",
+            metadata: {},
+            time: { start: started + 260, end: started + 280 },
+          },
+        },
+      },
+    });
     const failedToolStarted = Date.now();
     const failedToolEnded = failedToolStarted + 5_000;
-    await hooks["tool.execute.before"]?.(
-      { sessionID, callID: "timed-out-webfetch", tool: "webfetch" },
-      { args: { url: "https://example.com", timeout: 5 } },
-    );
     await emitEvent({
       type: "message.part.updated",
       properties: {
@@ -704,8 +810,6 @@ describe.sequential("built plugin", () => {
         "opencode.turn",
         "opencode.message.user",
         "opencode.generation",
-        "opencode.generation.reasoning",
-        "opencode.generation.reasoning",
         "read",
         "webfetch",
         "opencode.generation.retry",
@@ -714,6 +818,39 @@ describe.sequential("built plugin", () => {
     );
 
     const generation = getSpan(spans, "opencode.generation");
+    expect(getJsonAttribute(generation, "langfuse.observation.output")).toEqual(
+      [
+        {
+          role: "assistant",
+          content: "Repository inspected",
+          thinking: [
+            {
+              type: "thinking",
+              content: "I should inspect the README.",
+            },
+            {
+              type: "thinking",
+              content: "The README contains the project overview.",
+            },
+          ],
+          tool_calls: [
+            {
+              id: "nested-observations-call",
+              name: "read",
+              arguments: JSON.stringify({ path: "README.md" }),
+            },
+            {
+              id: "timed-out-webfetch",
+              name: "webfetch",
+              arguments: JSON.stringify({
+                url: "https://example.com",
+                timeout: 5,
+              }),
+            },
+          ],
+        },
+      ],
+    );
 
     const tool = getSpan(spans, "read");
     expect(getJsonAttribute(tool, "langfuse.observation.input")).toEqual({
@@ -752,23 +889,9 @@ describe.sequential("built plugin", () => {
     );
     expect(compaction.parentSpanId).toBe(generation.spanId);
 
-    const reasoningSpans = spans.filter((span) => {
-      if (span.name !== "opencode.generation.reasoning") {
-        return false;
-      }
-
-      const metadata = getJsonAttribute(span, "langfuse.observation.metadata");
-      return (
-        typeof metadata === "object" &&
-        metadata !== null &&
-        "messageID" in metadata &&
-        metadata.messageID === assistantMessageID
-      );
-    });
-    expect(reasoningSpans).toHaveLength(2);
-    for (const reasoning of reasoningSpans) {
-      expect(reasoning.parentSpanId).toBe(generation.spanId);
-    }
+    expect(
+      spans.filter((span) => span.name === "opencode.generation.reasoning"),
+    ).toHaveLength(0);
   });
 
   test("parents each tool to the generation that requested it when lifecycle events arrive out of order", async () => {
@@ -912,6 +1035,263 @@ describe.sequential("built plugin", () => {
     expect(toolSpans.map((span) => span.parentSpanId)).toEqual(
       generationSpans.map((span) => span.spanId),
     );
+    expect(
+      getJsonAttribute(generationSpans[1], "langfuse.observation.input"),
+    ).toEqual([
+      {
+        role: "assistant",
+        tool_calls: [
+          {
+            id: generations[0].callID,
+            name: generations[0].tool,
+            arguments: "{}",
+          },
+        ],
+      },
+      {
+        role: "tool",
+        name: generations[0].tool,
+        tool_call_id: generations[0].callID,
+        content: "ok",
+      },
+    ]);
+  });
+
+  test("creates a nested tool observation from message parts without execution hooks", async () => {
+    const sessionID = "message-part-tool-session";
+    const userMessageID = "message-part-tool-user";
+    const firstAssistantMessageID = "message-part-tool-assistant-1";
+    const secondAssistantMessageID = "message-part-tool-assistant-2";
+    const callID = "message-part-tool-call";
+    const started = startedAt;
+    const toolStarted = started + 200;
+    const toolCompleted = started + 350;
+
+    await sendUserMessage({
+      sessionID,
+      messageID: userMessageID,
+      text: "Show recent commits",
+      started,
+    });
+    await startAssistantMessage({
+      sessionID,
+      userMessageID,
+      assistantMessageID: firstAssistantMessageID,
+      started: started + 100,
+    });
+    await startGeneration({
+      id: "message-part-tool-step-1",
+      sessionID,
+      assistantMessageID: firstAssistantMessageID,
+      started: started + 100,
+    });
+
+    const runningPart = {
+      id: "message-part-tool-part",
+      sessionID,
+      messageID: firstAssistantMessageID,
+      type: "tool" as const,
+      callID,
+      tool: "bash",
+      state: {
+        status: "running" as const,
+        input: { command: "git log --oneline -10" },
+        title: "Recent commits",
+        time: { start: toolStarted },
+      },
+      metadata: { providerExecuted: true },
+    };
+    await emitEvent({
+      type: "message.part.updated",
+      properties: { part: runningPart },
+    });
+    await emitEvent({
+      type: "message.part.updated",
+      properties: { part: runningPart },
+    });
+    await emitEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          ...runningPart,
+          state: {
+            status: "completed" as const,
+            input: runningPart.state.input,
+            title: "Recent commits",
+            output: "07f9a68 Fix tool observation parenting",
+            metadata: {},
+            time: { start: toolStarted, end: toolCompleted },
+          },
+        },
+      },
+    });
+    await completeGeneration({
+      sessionID,
+      userMessageID,
+      assistantMessageID: firstAssistantMessageID,
+      started: started + 100,
+      completed: started + 400,
+    });
+
+    await startAssistantMessage({
+      sessionID,
+      userMessageID,
+      assistantMessageID: secondAssistantMessageID,
+      started: started + 500,
+    });
+    await startGeneration({
+      id: "message-part-tool-step-2",
+      sessionID,
+      assistantMessageID: secondAssistantMessageID,
+      started: started + 500,
+    });
+    await completeGeneration({
+      sessionID,
+      userMessageID,
+      assistantMessageID: secondAssistantMessageID,
+      started: started + 500,
+      completed: started + 700,
+      text: "Here are the recent commits.",
+    });
+
+    const { spans } = await flushSession(sessionID);
+    const generations = spans.filter(
+      (span) => span.name === "opencode.generation",
+    );
+    const findGeneration = (messageID: string) =>
+      generations.find((span) => {
+        const metadata = getJsonAttribute(
+          span,
+          "langfuse.observation.metadata",
+        );
+        return (
+          typeof metadata === "object" &&
+          metadata !== null &&
+          "messageID" in metadata &&
+          metadata.messageID === messageID
+        );
+      });
+    const firstGeneration = findGeneration(firstAssistantMessageID);
+    const secondGeneration = findGeneration(secondAssistantMessageID);
+    expect(firstGeneration).toBeDefined();
+    expect(secondGeneration).toBeDefined();
+
+    const toolSpans = spans.filter((span) => span.name === "bash");
+    expect(toolSpans).toHaveLength(1);
+    expect(toolSpans[0].parentSpanId).toBe(firstGeneration!.spanId);
+    expect(toolSpans[0].startTimeUnixNano).toBe(
+      (BigInt(toolStarted) * 1_000_000n).toString(),
+    );
+    expect(toolSpans[0].endTimeUnixNano).toBe(
+      (BigInt(toolCompleted) * 1_000_000n).toString(),
+    );
+    expect(
+      getJsonAttribute(toolSpans[0], "langfuse.observation.input"),
+    ).toEqual({ command: "git log --oneline -10" });
+    expect(
+      getJsonAttribute(toolSpans[0], "langfuse.observation.output"),
+    ).toEqual({
+      title: "Recent commits",
+      output: "07f9a68 Fix tool observation parenting",
+    });
+    expect(
+      getJsonAttribute(secondGeneration!, "langfuse.observation.input"),
+    ).toEqual([
+      {
+        role: "assistant",
+        tool_calls: [
+          {
+            id: callID,
+            name: "bash",
+            arguments: JSON.stringify({ command: "git log --oneline -10" }),
+          },
+        ],
+      },
+      {
+        role: "tool",
+        name: "bash",
+        tool_call_id: callID,
+        content: "07f9a68 Fix tool observation parenting",
+      },
+    ]);
+  });
+
+  test("continues tracing when available tool discovery fails", async () => {
+    const sessionID = "tool-discovery-failure-session";
+    toolListShouldFail = true;
+
+    await sendUserMessage({
+      sessionID,
+      messageID: "tool-discovery-failure-user",
+      text: "Continue without tool definitions",
+      started: startedAt,
+    });
+    await startGeneration({
+      id: "tool-discovery-failure-step",
+      sessionID,
+      started: startedAt + 100,
+    });
+    await completeGeneration({
+      sessionID,
+      userMessageID: "tool-discovery-failure-user",
+      assistantMessageID: "tool-discovery-failure-assistant",
+      started: startedAt + 100,
+      completed: startedAt + 500,
+      text: "Completed",
+    });
+
+    const { spans } = await flushSession(sessionID);
+    expect(
+      getJsonAttribute(
+        getSpan(spans, "opencode.generation"),
+        "langfuse.observation.input",
+      ),
+    ).toEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "Continue without tool definitions" }],
+      },
+    ]);
+
+    toolListShouldFail = false;
+    const retrySessionID = "tool-discovery-retry-session";
+    await sendUserMessage({
+      sessionID: retrySessionID,
+      messageID: "tool-discovery-retry-user",
+      text: "Retry tool discovery",
+      started: startedAt + 1_000,
+    });
+    await startGeneration({
+      id: "tool-discovery-retry-step",
+      sessionID: retrySessionID,
+      started: startedAt + 1_100,
+    });
+    await completeGeneration({
+      sessionID: retrySessionID,
+      userMessageID: "tool-discovery-retry-user",
+      assistantMessageID: "tool-discovery-retry-assistant",
+      started: startedAt + 1_100,
+      completed: startedAt + 1_500,
+      text: "Completed with tools",
+    });
+
+    const retry = await flushSession(retrySessionID);
+    expect(toolListCalls).toBe(2);
+    expect(
+      getJsonAttribute(
+        getSpan(retry.spans, "opencode.generation"),
+        "langfuse.observation.input",
+      ),
+    ).toEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "Retry tool discovery" }],
+        tools: expect.arrayContaining([
+          expect.objectContaining({ name: "read" }),
+          expect.objectContaining({ name: "webfetch" }),
+        ]),
+      },
+    ]);
   });
 
   test("preserves step metadata when the assistant message arrives later", async () => {
@@ -1070,9 +1450,7 @@ describe.sequential("built plugin", () => {
     const turn = getSpan(spans, "opencode.turn");
 
     expect(getJsonAttribute(generation, "langfuse.observation.output")).toEqual(
-      {
-        text: "Fallback output",
-      },
+      [{ role: "assistant", content: "Fallback output" }],
     );
     expect(generation.traceId).toBe(turn.traceId);
     expect(generation.parentSpanId).toBe(turn.spanId);
@@ -1142,9 +1520,21 @@ describe.sequential("built plugin", () => {
         "opencode.message.user",
         "opencode.generation",
         "opencode.generation.retry",
-        "opencode.generation.reasoning",
       ].sort(),
     );
+
+    expect(
+      getJsonAttribute(
+        getSpan(spans, "opencode.generation"),
+        "langfuse.observation.output",
+      ),
+    ).toEqual([
+      {
+        role: "assistant",
+        content: "One output",
+        thinking: [{ type: "thinking", content: "Think once" }],
+      },
+    ]);
   });
 
   test("does not reject hooks when the collector returns an error", async () => {

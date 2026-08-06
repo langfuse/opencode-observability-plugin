@@ -40,6 +40,7 @@ export class LangfuseClient {
     this.traceState.generationParentSpans.clear();
     this.traceState.turnObservationsByMessageId.clear();
     this.traceState.latestTurnObservationsBySession.clear();
+    this.traceState.finalizedToolCallIds.clear();
   }
 
   endActiveToolObservations(sessionID?: string, error?: SessionErrorInfo) {
@@ -61,6 +62,7 @@ export class LangfuseClient {
 
       observation.span.end();
       this.traceState.activeToolObservations.delete(callID);
+      this.traceState.finalizedToolCallIds.add(callID);
     }
   }
 
@@ -707,6 +709,7 @@ export class LangfuseClient {
     args: unknown;
   }) {
     this.traceState.activeToolObservations.get(input.callID)?.span.end();
+    this.traceState.finalizedToolCallIds.delete(input.callID);
     this.ensureGenerationParent(input.sessionID);
 
     this.withObservationParent(input.sessionID, () => {
@@ -738,6 +741,10 @@ export class LangfuseClient {
     title: string;
     output: string;
   }) {
+    if (this.traceState.finalizedToolCallIds.has(input.callID)) {
+      return;
+    }
+
     if (!this.traceState.activeToolObservations.has(input.callID)) {
       this.traceToolStart({
         sessionID: input.sessionID,
@@ -767,6 +774,32 @@ export class LangfuseClient {
 
     span.end();
     this.traceState.activeToolObservations.delete(input.callID);
+    this.traceState.finalizedToolCallIds.add(input.callID);
+  }
+
+  traceToolError(input: { callID: string; error: string; completed: number }) {
+    if (this.traceState.finalizedToolCallIds.has(input.callID)) {
+      return;
+    }
+
+    const span = this.traceState.activeToolObservations.get(input.callID)?.span;
+
+    if (!span) {
+      return;
+    }
+
+    span.setAttribute(
+      "langfuse.observation.output",
+      JSON.stringify({ error: input.error }),
+    );
+    span.setStatus({
+      code: SpanStatusCode.ERROR,
+      message: input.error,
+    });
+    span.recordException({ message: input.error });
+    span.end(new Date(input.completed));
+    this.traceState.activeToolObservations.delete(input.callID);
+    this.traceState.finalizedToolCallIds.add(input.callID);
   }
 
   private ensureGenerationParent(sessionID: string) {
@@ -873,6 +906,7 @@ export type LangfuseTraceState = {
   turnObservationsByMessageId: Map<string, TurnObservation>;
   latestTurnObservationsBySession: Map<string, TurnObservation>;
   activeToolObservations: Map<string, ToolObservation>;
+  finalizedToolCallIds: Set<string>;
   activeGenerationSteps: Map<string, ActiveGenerationStep>;
   generationParentSpans: Map<string, ApiSpan>;
 };
@@ -1029,6 +1063,7 @@ export const createLangfuseClient = (input: {
       turnObservationsByMessageId: new Map<string, TurnObservation>(),
       latestTurnObservationsBySession: new Map<string, TurnObservation>(),
       activeToolObservations: new Map<string, ToolObservation>(),
+      finalizedToolCallIds: new Set<string>(),
       activeGenerationSteps: new Map<string, ActiveGenerationStep>(),
       generationParentSpans: new Map<string, ApiSpan>(),
     };

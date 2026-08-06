@@ -613,6 +613,15 @@ describe.sequential("built plugin", () => {
         },
       },
     });
+    await hooks["tool.execute.after"]?.(
+      {
+        sessionID,
+        callID: "timed-out-webfetch",
+        tool: "webfetch",
+        args: { url: "https://example.com", timeout: 5 },
+      },
+      { title: "Web fetch", output: "late output", metadata: {} },
+    );
     await emitEvent({
       id: "nested-observations-retry",
       type: "session.next.retried",

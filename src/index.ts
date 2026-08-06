@@ -166,8 +166,18 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
     }
 
     if (event.type === "message.part.updated") {
-      langfuse.rememberAssistantPart(event.properties.part);
-      langfuse.traceReasoningPart(event.properties.part);
+      const part = event.properties.part;
+
+      langfuse.rememberAssistantPart(part);
+      langfuse.traceReasoningPart(part);
+
+      if (part.type === "tool" && part.state.status === "error") {
+        langfuse.traceToolError({
+          callID: part.callID,
+          error: part.state.error,
+          completed: part.state.time.end,
+        });
+      }
     }
 
     if (event.type === "session.next.step.started") {

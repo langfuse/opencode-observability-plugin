@@ -205,9 +205,19 @@ export class LangfuseClient {
   }
 
   traceReasoningPart(part: MessagePart) {
+    if (
+      part.type !== "reasoning" ||
+      typeof part.id !== "string" ||
+      typeof part.sessionID !== "string" ||
+      typeof part.messageID !== "string" ||
+      typeof part.text !== "string"
+    ) {
+      return;
+    }
+
     const completed = getCompletedReasoningTimestamp(part);
 
-    if (!isCompletedReasoningPart(part) || completed === undefined) {
+    if (completed === undefined) {
       return;
     }
 
@@ -252,7 +262,6 @@ export class LangfuseClient {
           ...input.model,
           variant: input.model.variant ?? existingMessageStep.model?.variant,
         },
-        started: input.started,
         snapshot: input.snapshot ?? existingMessageStep.snapshot,
       };
 
@@ -291,7 +300,6 @@ export class LangfuseClient {
           ...input.model,
           variant: input.model.variant ?? existingStep.model?.variant,
         },
-        started: input.started,
         snapshot: input.snapshot ?? existingStep.snapshot,
       };
 
@@ -358,7 +366,6 @@ export class LangfuseClient {
         agent: input.agent,
         model: input.model,
         span,
-        started: input.started,
         snapshot: input.snapshot,
       });
       if (messageID) {
@@ -456,7 +463,7 @@ export class LangfuseClient {
 
     const span = this.traceState.tracer.startSpan("opencode.turn", {
       attributes: {
-        "langfuse.observation.type": "span",
+        "langfuse.observation.type": "agent",
         "langfuse.internal.is_app_root": true,
         "session.id": input.sessionID,
         "langfuse.observation.input": JSON.stringify([formattedMessage]),
@@ -519,25 +526,18 @@ export class LangfuseClient {
     this.traceState.assistantParts.set(part.messageID, parts);
 
     if (part.type === "tool") {
-      this.rememberToolCall({
-        callID: part.callID,
-        messageID: part.messageID,
-      });
+      this.traceState.toolMessageIdsByCallId.set(part.callID, part.messageID);
     }
   }
 
   rememberToolCall(input: {
     callID: string;
     messageID: string;
-    sessionID?: string;
-    tool?: string;
-    args?: Record<string, unknown>;
+    sessionID: string;
+    tool: string;
+    args: Record<string, unknown>;
   }) {
     this.traceState.toolMessageIdsByCallId.set(input.callID, input.messageID);
-
-    if (!input.sessionID || !input.tool || !input.args) {
-      return;
-    }
 
     const parts =
       this.traceState.assistantParts.get(input.messageID) ??
@@ -1207,36 +1207,17 @@ export type MessagePart = Extract<
   { type: "message.part.updated" }
 >["properties"]["part"];
 
-type CompletedReasoningPart = MessagePart & {
-  id: string;
-  sessionID: string;
-  text: string;
-  messageID: string;
-  time: { completed?: number; end?: number };
-};
-
-function isCompletedReasoningPart(
-  part: MessagePart,
-): part is CompletedReasoningPart {
-  return (
-    part.type === "reasoning" &&
-    typeof part.id === "string" &&
-    typeof part.sessionID === "string" &&
-    typeof part.messageID === "string" &&
-    typeof part.text === "string" &&
-    typeof getCompletedReasoningTimestamp(part) === "number"
-  );
-}
-
 function getCompletedReasoningTimestamp(part: MessagePart) {
-  const time = (part as { time?: { completed?: unknown; end?: unknown } }).time;
-
-  if (typeof time?.completed === "number") {
-    return time.completed;
+  if (!("time" in part) || !part.time || typeof part.time !== "object") {
+    return undefined;
   }
 
-  if (typeof time?.end === "number") {
-    return time.end;
+  if ("completed" in part.time && typeof part.time.completed === "number") {
+    return part.time.completed;
+  }
+
+  if ("end" in part.time && typeof part.time.end === "number") {
+    return part.time.end;
   }
 
   return undefined;
@@ -1266,7 +1247,7 @@ export type UserMessageInput = {
 export type ToolDefinition = {
   name: string;
   description?: string;
-  parameters?: Record<string, unknown>;
+  parameters?: object;
 };
 
 type ChatMlMessage =
@@ -1301,9 +1282,7 @@ export type ActiveGenerationStep = {
     variant?: string;
   };
   span: ApiSpan;
-  started?: number;
   snapshot?: string;
-  input?: ChatMlMessage[];
 };
 
 export class LangfuseClientService extends EffectContext.Tag(

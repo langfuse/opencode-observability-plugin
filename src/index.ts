@@ -8,7 +8,6 @@ import { Data, Effect, Layer, Schema } from "effect";
 import {
   LangfuseClientService,
   createLangfuseClient,
-  type ActiveGenerationStep,
   type LangfuseClient,
   type ToolDefinition,
 } from "./langfuse.js";
@@ -26,7 +25,9 @@ type SessionNextEvent =
         timestamp: number;
         assistantMessageID?: string;
         agent: string;
-        model: NonNullable<ActiveGenerationStep["model"]>;
+        model: Parameters<
+          LangfuseClient["startActiveGenerationStep"]
+        >[0]["model"];
         snapshot?: string;
       };
     }
@@ -502,10 +503,7 @@ const main = Effect.gen(function* () {
                       tool.parameters !== null &&
                       !Array.isArray(tool.parameters)
                         ? {
-                            parameters: tool.parameters as Record<
-                              string,
-                              unknown
-                            >,
+                            parameters: tool.parameters,
                           }
                         : {}),
                     })),

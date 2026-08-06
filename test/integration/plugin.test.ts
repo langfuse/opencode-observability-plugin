@@ -578,6 +578,11 @@ describe.sequential("built plugin", () => {
         },
       ]);
     }
+    for (const turn of spans.filter((span) => span.name === "opencode.turn")) {
+      expect(getAttributes(turn)).toMatchObject({
+        "langfuse.observation.type": "agent",
+      });
+    }
 
     const firstGeneration = spans
       .filter((span) => span.name === "opencode.generation")

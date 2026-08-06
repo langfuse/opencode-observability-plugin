@@ -24,6 +24,8 @@ interface OtlpSpan {
   traceId: string;
   spanId: string;
   parentSpanId?: string;
+  startTimeUnixNano: string;
+  endTimeUnixNano: string;
   attributes: Array<{ key: string; value: OtlpValue }>;
   status?: { code?: number; message?: string };
   events?: Array<{ name: string }>;
@@ -586,6 +588,40 @@ describe.sequential("built plugin", () => {
       },
       { title: "README.md", output: "# Project", metadata: {} },
     );
+    const failedToolStarted = Date.now();
+    const failedToolEnded = failedToolStarted + 5_000;
+    await hooks["tool.execute.before"]?.(
+      { sessionID, callID: "timed-out-webfetch", tool: "webfetch" },
+      { args: { url: "https://example.com", timeout: 5 } },
+    );
+    await emitEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "timed-out-webfetch-part",
+          sessionID,
+          messageID: assistantMessageID,
+          type: "tool",
+          callID: "timed-out-webfetch",
+          tool: "webfetch",
+          state: {
+            status: "error",
+            input: { url: "https://example.com", timeout: 5 },
+            error: "Tool execution timed out after 5 seconds",
+            time: { start: failedToolStarted, end: failedToolEnded },
+          },
+        },
+      },
+    });
+    await hooks["tool.execute.after"]?.(
+      {
+        sessionID,
+        callID: "timed-out-webfetch",
+        tool: "webfetch",
+        args: { url: "https://example.com", timeout: 5 },
+      },
+      { title: "Web fetch", output: "late output", metadata: {} },
+    );
     await emitEvent({
       id: "nested-observations-retry",
       type: "session.next.retried",
@@ -624,6 +660,7 @@ describe.sequential("built plugin", () => {
         "opencode.generation.reasoning",
         "opencode.generation.reasoning",
         "read",
+        "webfetch",
         "opencode.generation.retry",
         "opencode.generation.compaction",
       ].sort(),
@@ -641,6 +678,18 @@ describe.sequential("built plugin", () => {
     });
     expect(tool.traceId).toBe(generation.traceId);
     expect(tool.parentSpanId).toBe(generation.spanId);
+
+    const failedTool = getSpan(spans, "webfetch");
+    expect(failedTool.endTimeUnixNano).toBe(
+      (BigInt(failedToolEnded) * 1_000_000n).toString(),
+    );
+    expect(failedTool.status).toEqual({
+      code: 2,
+      message: "Tool execution timed out after 5 seconds",
+    });
+    expect(getJsonAttribute(failedTool, "langfuse.observation.output")).toEqual(
+      { error: "Tool execution timed out after 5 seconds" },
+    );
 
     const retry = getSpan(spans, "opencode.generation.retry");
     expect(getJsonAttribute(retry, "langfuse.observation.metadata")).toEqual({

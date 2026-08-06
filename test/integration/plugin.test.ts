@@ -52,6 +52,7 @@ type SessionNextEvent =
       properties: {
         sessionID: string;
         timestamp: number;
+        assistantMessageID?: string;
         agent: string;
         model: {
           id: string;
@@ -68,6 +69,19 @@ type SessionNextEvent =
         sessionID: string;
         timestamp: number;
         error: { message: string };
+      };
+    }
+  | {
+      id: string;
+      type: "session.next.tool.called";
+      properties: {
+        sessionID: string;
+        timestamp: number;
+        assistantMessageID?: string;
+        callID: string;
+        tool: string;
+        input: Record<string, unknown>;
+        provider: { executed: boolean; metadata?: unknown };
       };
     }
   | {
@@ -235,6 +249,7 @@ const sendUserMessage = async (input: {
 const startGeneration = async (input: {
   id: string;
   sessionID: string;
+  assistantMessageID?: string;
   started: number;
   snapshot?: string;
 }) => {
@@ -244,6 +259,7 @@ const startGeneration = async (input: {
     properties: {
       sessionID: input.sessionID,
       timestamp: input.started,
+      assistantMessageID: input.assistantMessageID,
       agent: "build",
       model: {
         id: "test-model",
@@ -251,6 +267,37 @@ const startGeneration = async (input: {
         variant: "high",
       },
       snapshot: input.snapshot,
+    },
+  });
+};
+
+const startAssistantMessage = async (input: {
+  sessionID: string;
+  userMessageID: string;
+  assistantMessageID: string;
+  started: number;
+}) => {
+  await emitEvent({
+    type: "message.updated",
+    properties: {
+      info: {
+        id: input.assistantMessageID,
+        sessionID: input.sessionID,
+        parentID: input.userMessageID,
+        role: "assistant",
+        mode: "build",
+        modelID: "test-model",
+        providerID: "test-provider",
+        path: { cwd: "/test", root: "/test" },
+        cost: 0,
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+        time: { created: input.started },
+      },
     },
   });
 };
@@ -724,117 +771,187 @@ describe.sequential("built plugin", () => {
     }
   });
 
-  test.fails(
-    "parents each tool to the generation that requested it when lifecycle events arrive out of order",
-    async () => {
-      const sessionID = "out-of-order-tool-parenting-session";
-      const userMessageID = "out-of-order-tool-parenting-user";
-      const started = startedAt;
-      const generations = [1, 2, 3].map((index) => ({
-        assistantMessageID: `out-of-order-tool-parenting-assistant-${index}`,
-        stepID: `out-of-order-tool-parenting-step-${index}`,
-        tool: `out-of-order-tool-${index}`,
-        callID: `out-of-order-tool-parenting-call-${index}`,
-      }));
+  test("parents each tool to the generation that requested it when lifecycle events arrive out of order", async () => {
+    const sessionID = "out-of-order-tool-parenting-session";
+    const userMessageID = "out-of-order-tool-parenting-user";
+    const started = startedAt;
+    const generations = [1, 2, 3].map((index) => ({
+      assistantMessageID: `out-of-order-tool-parenting-assistant-${index}`,
+      stepID: `out-of-order-tool-parenting-step-${index}`,
+      tool: `out-of-order-tool-${index}`,
+      callID: `out-of-order-tool-parenting-call-${index}`,
+    }));
 
-      const executeTool = async (generation: (typeof generations)[number]) => {
-        await hooks["tool.execute.before"]?.(
-          { sessionID, callID: generation.callID, tool: generation.tool },
-          { args: { generation: generation.assistantMessageID } },
-        );
-        await hooks["tool.execute.after"]?.(
-          {
-            sessionID,
-            callID: generation.callID,
-            tool: generation.tool,
-            args: { generation: generation.assistantMessageID },
-          },
-          { title: generation.tool, output: "ok", metadata: {} },
-        );
-      };
-
-      await sendUserMessage({
-        sessionID,
-        messageID: userMessageID,
-        text: "Run three tool batches",
-        started,
+    const executeTool = async (generation: (typeof generations)[number]) => {
+      await emitEvent({
+        id: `${generation.callID}-called`,
+        type: "session.next.tool.called",
+        properties: {
+          sessionID,
+          timestamp: started,
+          assistantMessageID: generation.assistantMessageID,
+          callID: generation.callID,
+          tool: generation.tool,
+          input: {},
+          provider: { executed: false },
+        },
       });
-
-      await startGeneration({
-        id: generations[0].stepID,
-        sessionID,
-        started: started + 100,
-      });
-      await executeTool(generations[0]);
-
-      // The next generation and its tool begin before the previous generation's
-      // completed message event reaches the plugin.
-      await startGeneration({
-        id: generations[1].stepID,
-        sessionID,
-        started: started + 200,
-      });
-      await executeTool(generations[1]);
-      await completeGeneration({
-        sessionID,
-        userMessageID,
-        assistantMessageID: generations[0].assistantMessageID,
-        started: started + 100,
-        completed: started + 190,
-      });
-
-      await startGeneration({
-        id: generations[2].stepID,
-        sessionID,
-        started: started + 300,
-      });
-      await executeTool(generations[2]);
-      await completeGeneration({
-        sessionID,
-        userMessageID,
-        assistantMessageID: generations[1].assistantMessageID,
-        started: started + 200,
-        completed: started + 290,
-      });
-      await completeGeneration({
-        sessionID,
-        userMessageID,
-        assistantMessageID: generations[2].assistantMessageID,
-        started: started + 300,
-        completed: started + 390,
-      });
-
-      const { spans } = await flushSession(sessionID);
-      const generationSpans = generations.map((generation) => {
-        const span = spans.find((candidate) => {
-          if (candidate.name !== "opencode.generation") {
-            return false;
-          }
-
-          const metadata = getJsonAttribute(
-            candidate,
-            "langfuse.observation.metadata",
-          );
-          return (
-            typeof metadata === "object" &&
-            metadata !== null &&
-            "messageID" in metadata &&
-            metadata.messageID === generation.assistantMessageID
-          );
-        });
-
-        expect(span).toBeDefined();
-        return span!;
-      });
-      const toolSpans = generations.map((generation) =>
-        getSpan(spans, generation.tool),
+      await hooks["tool.execute.before"]?.(
+        { sessionID, callID: generation.callID, tool: generation.tool },
+        { args: { generation: generation.assistantMessageID } },
       );
-
-      expect(toolSpans.map((span) => span.parentSpanId)).toEqual(
-        generationSpans.map((span) => span.spanId),
+      await hooks["tool.execute.after"]?.(
+        {
+          sessionID,
+          callID: generation.callID,
+          tool: generation.tool,
+          args: { generation: generation.assistantMessageID },
+        },
+        { title: generation.tool, output: "ok", metadata: {} },
       );
-    },
-  );
+    };
+
+    await sendUserMessage({
+      sessionID,
+      messageID: userMessageID,
+      text: "Run three tool batches",
+      started,
+    });
+
+    await startAssistantMessage({
+      sessionID,
+      userMessageID,
+      assistantMessageID: generations[0].assistantMessageID,
+      started: started + 100,
+    });
+    await startGeneration({
+      id: generations[0].stepID,
+      sessionID,
+      assistantMessageID: generations[0].assistantMessageID,
+      started: started + 100,
+    });
+    await executeTool(generations[0]);
+
+    // The next generation and its tool begin before the previous generation's
+    // completed message event reaches the plugin.
+    await startAssistantMessage({
+      sessionID,
+      userMessageID,
+      assistantMessageID: generations[1].assistantMessageID,
+      started: started + 200,
+    });
+    await startGeneration({
+      id: generations[1].stepID,
+      sessionID,
+      assistantMessageID: generations[1].assistantMessageID,
+      started: started + 200,
+    });
+    await executeTool(generations[1]);
+    await completeGeneration({
+      sessionID,
+      userMessageID,
+      assistantMessageID: generations[0].assistantMessageID,
+      started: started + 100,
+      completed: started + 190,
+    });
+
+    await startAssistantMessage({
+      sessionID,
+      userMessageID,
+      assistantMessageID: generations[2].assistantMessageID,
+      started: started + 300,
+    });
+    await startGeneration({
+      id: generations[2].stepID,
+      sessionID,
+      assistantMessageID: generations[2].assistantMessageID,
+      started: started + 300,
+    });
+    await executeTool(generations[2]);
+    await completeGeneration({
+      sessionID,
+      userMessageID,
+      assistantMessageID: generations[1].assistantMessageID,
+      started: started + 200,
+      completed: started + 290,
+    });
+    await completeGeneration({
+      sessionID,
+      userMessageID,
+      assistantMessageID: generations[2].assistantMessageID,
+      started: started + 300,
+      completed: started + 390,
+    });
+
+    const { spans } = await flushSession(sessionID);
+    const generationSpans = generations.map((generation) => {
+      const span = spans.find((candidate) => {
+        if (candidate.name !== "opencode.generation") {
+          return false;
+        }
+
+        const metadata = getJsonAttribute(
+          candidate,
+          "langfuse.observation.metadata",
+        );
+        return (
+          typeof metadata === "object" &&
+          metadata !== null &&
+          "messageID" in metadata &&
+          metadata.messageID === generation.assistantMessageID
+        );
+      });
+
+      expect(span).toBeDefined();
+      return span!;
+    });
+    const toolSpans = generations.map((generation) =>
+      getSpan(spans, generation.tool),
+    );
+
+    expect(toolSpans.map((span) => span.parentSpanId)).toEqual(
+      generationSpans.map((span) => span.spanId),
+    );
+  });
+
+  test("preserves step metadata when the assistant message arrives later", async () => {
+    const sessionID = "late-assistant-message-session";
+    const userMessageID = "late-assistant-message-user";
+    const assistantMessageID = "late-assistant-message-assistant";
+    const started = startedAt;
+
+    await sendUserMessage({
+      sessionID,
+      messageID: userMessageID,
+      text: "Keep the generation metadata",
+      started,
+    });
+    await startGeneration({
+      id: "late-assistant-message-step",
+      sessionID,
+      assistantMessageID,
+      started: started + 100,
+      snapshot: "snapshot-1",
+    });
+    await startAssistantMessage({
+      sessionID,
+      userMessageID,
+      assistantMessageID,
+      started: started + 100,
+    });
+
+    const { spans } = await flushSession(sessionID);
+    const generation = getSpan(spans, "opencode.generation");
+
+    expect(
+      getJsonAttribute(generation, "langfuse.observation.metadata"),
+    ).toEqual({
+      agent: "build",
+      providerID: "test-provider",
+      variant: "high",
+      snapshot: "snapshot-1",
+    });
+  });
 
   test("exports a failed generation as an error span", async () => {
     const sessionID = "failed-session";

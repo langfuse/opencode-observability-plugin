@@ -724,6 +724,118 @@ describe.sequential("built plugin", () => {
     }
   });
 
+  test.fails(
+    "parents each tool to the generation that requested it when lifecycle events arrive out of order",
+    async () => {
+      const sessionID = "out-of-order-tool-parenting-session";
+      const userMessageID = "out-of-order-tool-parenting-user";
+      const started = startedAt;
+      const generations = [1, 2, 3].map((index) => ({
+        assistantMessageID: `out-of-order-tool-parenting-assistant-${index}`,
+        stepID: `out-of-order-tool-parenting-step-${index}`,
+        tool: `out-of-order-tool-${index}`,
+        callID: `out-of-order-tool-parenting-call-${index}`,
+      }));
+
+      const executeTool = async (generation: (typeof generations)[number]) => {
+        await hooks["tool.execute.before"]?.(
+          { sessionID, callID: generation.callID, tool: generation.tool },
+          { args: { generation: generation.assistantMessageID } },
+        );
+        await hooks["tool.execute.after"]?.(
+          {
+            sessionID,
+            callID: generation.callID,
+            tool: generation.tool,
+            args: { generation: generation.assistantMessageID },
+          },
+          { title: generation.tool, output: "ok", metadata: {} },
+        );
+      };
+
+      await sendUserMessage({
+        sessionID,
+        messageID: userMessageID,
+        text: "Run three tool batches",
+        started,
+      });
+
+      await startGeneration({
+        id: generations[0].stepID,
+        sessionID,
+        started: started + 100,
+      });
+      await executeTool(generations[0]);
+
+      // The next generation and its tool begin before the previous generation's
+      // completed message event reaches the plugin.
+      await startGeneration({
+        id: generations[1].stepID,
+        sessionID,
+        started: started + 200,
+      });
+      await executeTool(generations[1]);
+      await completeGeneration({
+        sessionID,
+        userMessageID,
+        assistantMessageID: generations[0].assistantMessageID,
+        started: started + 100,
+        completed: started + 190,
+      });
+
+      await startGeneration({
+        id: generations[2].stepID,
+        sessionID,
+        started: started + 300,
+      });
+      await executeTool(generations[2]);
+      await completeGeneration({
+        sessionID,
+        userMessageID,
+        assistantMessageID: generations[1].assistantMessageID,
+        started: started + 200,
+        completed: started + 290,
+      });
+      await completeGeneration({
+        sessionID,
+        userMessageID,
+        assistantMessageID: generations[2].assistantMessageID,
+        started: started + 300,
+        completed: started + 390,
+      });
+
+      const { spans } = await flushSession(sessionID);
+      const generationSpans = generations.map((generation) => {
+        const span = spans.find((candidate) => {
+          if (candidate.name !== "opencode.generation") {
+            return false;
+          }
+
+          const metadata = getJsonAttribute(
+            candidate,
+            "langfuse.observation.metadata",
+          );
+          return (
+            typeof metadata === "object" &&
+            metadata !== null &&
+            "messageID" in metadata &&
+            metadata.messageID === generation.assistantMessageID
+          );
+        });
+
+        expect(span).toBeDefined();
+        return span!;
+      });
+      const toolSpans = generations.map((generation) =>
+        getSpan(spans, generation.tool),
+      );
+
+      expect(toolSpans.map((span) => span.parentSpanId)).toEqual(
+        generationSpans.map((span) => span.spanId),
+      );
+    },
+  );
+
   test("exports a failed generation as an error span", async () => {
     const sessionID = "failed-session";
     const started = startedAt;

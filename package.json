@@ -39,7 +39,8 @@
   "scripts": {
     "build": "tsc",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:integration": "pnpm run build && tsc --noEmit -p tsconfig.test.json && vitest run test/integration"
   },
   "dependencies": {
     "@langfuse/otel": "^5.4.1",
@@ -50,7 +51,9 @@
     "effect": "^3.21.2"
   },
   "devDependencies": {
+    "@types/node": "^26.1.2",
     "prettier": "^3.8.3",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "4.1.6"
   }
 }

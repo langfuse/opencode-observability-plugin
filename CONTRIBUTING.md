@@ -35,11 +35,11 @@ tsdown bundles the plugin and its runtime dependencies into `dist/index.js`. Do 
 1. From a clean, up-to-date `main` branch, bump the version and push the resulting commit and tag:
 
    ```bash
-   pnpm version 1.2.3
+   pnpm version 1.2.3 --message "Release v%s"
    git push origin main --follow-tags
    ```
 
-   `pnpm version` updates `package.json`, creates a version commit, and tags it as `v1.2.3`. The release workflow verifies the version, builds and tests the package, stages it on npm with provenance, and creates a draft GitHub release.
+   `pnpm version` updates `package.json`, creates a commit titled `Release v1.2.3`, and tags it as `v1.2.3`. The release workflow verifies the version, builds and tests the package, stages it on npm with provenance, and creates a draft GitHub release.
 
 2. Review the staged package on npmjs.com or with the npm CLI:
 

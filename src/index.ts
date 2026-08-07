@@ -8,8 +8,8 @@ import { Data, Effect, Layer, Schema } from "effect";
 import {
   LangfuseClientService,
   createLangfuseClient,
-  type ActiveGenerationStep,
   type LangfuseClient,
+  type ToolDefinition,
 } from "./langfuse.js";
 import { OpencodeClientService } from "./opencode.js";
 import { log } from "./utils.js";
@@ -25,7 +25,9 @@ type SessionNextEvent =
         timestamp: number;
         assistantMessageID?: string;
         agent: string;
-        model: NonNullable<ActiveGenerationStep["model"]>;
+        model: Parameters<
+          LangfuseClient["startActiveGenerationStep"]
+        >[0]["model"];
         snapshot?: string;
       };
     }
@@ -186,10 +188,40 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
       langfuse.rememberAssistantPart(part);
       langfuse.traceReasoningPart(part);
 
+      if (part.type === "tool" && part.state.status === "running") {
+        langfuse.traceToolStart({
+          sessionID: part.sessionID,
+          messageID: part.messageID,
+          callID: part.callID,
+          tool: part.tool,
+          args: part.state.input,
+          started: part.state.time.start,
+        });
+      }
+
+      if (part.type === "tool" && part.state.status === "completed") {
+        langfuse.traceToolEnd({
+          sessionID: part.sessionID,
+          messageID: part.messageID,
+          callID: part.callID,
+          tool: part.tool,
+          args: part.state.input,
+          title: part.state.title,
+          output: part.state.output,
+          started: part.state.time.start,
+          completed: part.state.time.end,
+        });
+      }
+
       if (part.type === "tool" && part.state.status === "error") {
         langfuse.traceToolError({
+          sessionID: part.sessionID,
+          messageID: part.messageID,
           callID: part.callID,
+          tool: part.tool,
+          args: part.state.input,
           error: part.state.error,
+          started: part.state.time.start,
           completed: part.state.time.end,
         });
       }
@@ -223,6 +255,9 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
       langfuse.rememberToolCall({
         callID: event.properties.callID,
         messageID: event.properties.assistantMessageID,
+        sessionID: event.properties.sessionID,
+        tool: event.properties.tool,
+        args: event.properties.input,
       });
     }
 
@@ -240,13 +275,12 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
     }
 
     if (event.type === "session.next.reasoning.ended") {
-      langfuse.traceReasoning({
+      langfuse.rememberReasoning({
         reasoningID: event.properties.reasoningID,
         sessionID: event.properties.sessionID,
         timestamp: event.properties.timestamp,
         text: event.properties.text,
         messageID: event.properties.assistantMessageID,
-        source: "session.next.reasoning.ended",
       });
     }
 
@@ -378,6 +412,7 @@ const main = Effect.gen(function* () {
     langfuse.clearTraceState();
   });
   const shutdownOnce = createShutdownOnce(langfuse);
+  const toolDefinitions = new Map<string, Promise<ToolDefinition[]>>();
 
   const runHook = (
     hookName: string,
@@ -438,16 +473,61 @@ const main = Effect.gen(function* () {
     "chat.message": (input, output) =>
       runHook(
         "chat.message",
-        Effect.try({
-          try: () =>
+        Effect.gen(function* () {
+          let tools: ToolDefinition[] | undefined;
+
+          if (input.model) {
+            const enabledTools = output.message.tools;
+            const cacheKey = JSON.stringify([
+              input.model.providerID,
+              input.model.modelID,
+              enabledTools,
+            ]);
+            let pendingTools = toolDefinitions.get(cacheKey);
+
+            if (!pendingTools) {
+              pendingTools = opencode.tool
+                .list({
+                  query: {
+                    provider: input.model.providerID,
+                    model: input.model.modelID,
+                  },
+                })
+                .then(({ data }) =>
+                  (data ?? [])
+                    .filter((tool) => enabledTools?.[tool.id] !== false)
+                    .map((tool) => ({
+                      name: tool.id,
+                      description: tool.description,
+                      ...(typeof tool.parameters === "object" &&
+                      tool.parameters !== null &&
+                      !Array.isArray(tool.parameters)
+                        ? {
+                            parameters: tool.parameters,
+                          }
+                        : {}),
+                    })),
+                )
+                .catch(() => {
+                  toolDefinitions.delete(cacheKey);
+                  return [];
+                });
+              toolDefinitions.set(cacheKey, pendingTools);
+            }
+
+            tools = yield* Effect.promise(() => pendingTools);
+          }
+
+          yield* Effect.sync(() =>
             langfuse.traceUserMessage({
               sessionID: input.sessionID,
               messageID: input.messageID,
               agent: input.agent,
               model: input.model,
               parts: output.parts,
+              tools,
             }),
-          catch: (error) => error,
+          );
         }),
       ),
 

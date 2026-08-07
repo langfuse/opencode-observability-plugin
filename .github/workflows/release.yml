@@ -53,7 +53,12 @@ jobs:
       - name: Integration test
         run: pnpm run test:integration
       - name: Stage npm package
-        run: npm stage publish --provenance --access public
+        run: |
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            npm stage publish --provenance --access public --tag next
+          else
+            npm stage publish --provenance --access public
+          fi
       - name: Create draft GitHub release
         run: gh release create "$GITHUB_REF_NAME" --draft --generate-notes --verify-tag
         env:

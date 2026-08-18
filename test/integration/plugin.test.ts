@@ -660,6 +660,103 @@ describe.sequential("built plugin", () => {
       variant: "high",
       snapshot: "snapshot-1",
     });
+
+    const secondGeneration = spans
+      .filter((span) => span.name === "opencode.generation")
+      .find((span) => {
+        const metadata = getJsonAttribute(
+          span,
+          "langfuse.observation.metadata",
+        );
+        return (
+          typeof metadata === "object" &&
+          metadata !== null &&
+          "messageID" in metadata &&
+          metadata.messageID === secondAssistantMessageID
+        );
+      });
+    if (!secondGeneration) {
+      throw new Error("Expected the second generation span");
+    }
+
+    expect(
+      getJsonAttribute(secondGeneration, "langfuse.observation.input"),
+    ).toEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "Inspect the repository" }],
+        tools: expect.any(Array),
+      },
+      { role: "assistant", content: "Repository inspected" },
+      {
+        role: "user",
+        content: [{ type: "text", text: "Summarize it" }],
+        tools: expect.any(Array),
+      },
+    ]);
+  });
+
+  test("carries prior turns into later generation inputs across idle flushes", async () => {
+    const sessionID = "history-session";
+    const started = startedAt;
+
+    await sendUserMessage({
+      sessionID,
+      messageID: "history-user-1",
+      text: "Read the README",
+      started,
+    });
+    await startGeneration({
+      id: "history-step-1",
+      sessionID,
+      started: started + 100,
+    });
+    await completeGeneration({
+      sessionID,
+      userMessageID: "history-user-1",
+      assistantMessageID: "history-assistant-1",
+      started: started + 100,
+      completed: started + 500,
+      text: "The README describes the project",
+    });
+    await flushSession(sessionID);
+
+    await sendUserMessage({
+      sessionID,
+      messageID: "history-user-2",
+      text: "Now summarize it",
+      started: started + 1_000,
+    });
+    await startGeneration({
+      id: "history-step-2",
+      sessionID,
+      started: started + 1_100,
+    });
+    await completeGeneration({
+      sessionID,
+      userMessageID: "history-user-2",
+      assistantMessageID: "history-assistant-2",
+      started: started + 1_100,
+      completed: started + 1_500,
+      text: "A summary",
+    });
+
+    const { spans } = await flushSession(sessionID);
+    const generation = getSpan(spans, "opencode.generation");
+
+    expect(getJsonAttribute(generation, "langfuse.observation.input")).toEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "Read the README" }],
+        tools: expect.any(Array),
+      },
+      { role: "assistant", content: "The README describes the project" },
+      {
+        role: "user",
+        content: [{ type: "text", text: "Now summarize it" }],
+        tools: expect.any(Array),
+      },
+    ]);
   });
 
   test("exports reasoning, tool, retry, and compaction spans", async () => {
@@ -1044,6 +1141,11 @@ describe.sequential("built plugin", () => {
       getJsonAttribute(generationSpans[1], "langfuse.observation.input"),
     ).toEqual([
       {
+        role: "user",
+        content: [{ type: "text", text: "Run three tool batches" }],
+        tools: expect.any(Array),
+      },
+      {
         role: "assistant",
         tool_calls: [
           {
@@ -1202,6 +1304,11 @@ describe.sequential("built plugin", () => {
     expect(
       getJsonAttribute(secondGeneration!, "langfuse.observation.input"),
     ).toEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "Show recent commits" }],
+        tools: expect.any(Array),
+      },
       {
         role: "assistant",
         tool_calls: [

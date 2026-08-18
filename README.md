@@ -47,7 +47,7 @@ If both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set, the plugin uses
 
 ## Contributing
 
-See the [Langfuse contributing guide](https://github.com/langfuse/langfuse/blob/main/CONTRIBUTING.md).
+See the [contributing guide](./CONTRIBUTING.md).
 
 ## License
 

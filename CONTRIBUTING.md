@@ -1,5 +1,7 @@
 # Development and Maintenance
 
+See the [main Langfuse contributing guide](https://github.com/langfuse/langfuse/blob/main/CONTRIBUTING.md) for organization-wide guidance.
+
 ## Local Development
 
 This package is currently marked as private. For local development, use a local plugin path in your OpenCode config instead of the package name.

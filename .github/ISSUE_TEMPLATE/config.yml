@@ -1,0 +1,10 @@
+contact_links:
+  - name: 🐞 Bug Report
+    url: https://github.com/langfuse/opencode-observability-plugin/issues/new?title=bug%3A+
+    about: Create a bug report to help us improve the Langfuse OpenCode plugin.
+  - name: 💡 Feature Request
+    url: https://github.com/orgs/langfuse/discussions/new?category=ideas&title=OpenCode%20Plugin%3A%20
+    about: Suggest ideas for the Langfuse OpenCode plugin in our discussion forums.
+  - name: 🤗 Get Help
+    url: https://github.com/orgs/langfuse/discussions/new?category=support&title=OpenCode%20Plugin%3A%20
+    about: If the plugin doesn’t work as expected, open a question in our discussion forums.

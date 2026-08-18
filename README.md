@@ -45,6 +45,10 @@ export LANGFUSE_USER_ID="your-user-id"
 
 If both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set, the plugin uses environment variables instead of reading the config file. Optional values can be supplied either way.
 
+## Contributing
+
+See the [Langfuse contributing guide](https://github.com/langfuse/langfuse/blob/main/CONTRIBUTING.md).
+
 ## License
 
 [MIT](./LICENSE)

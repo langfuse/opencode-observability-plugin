@@ -1,6 +1,6 @@
 # Development and Maintenance
 
-See the [main Langfuse contributing guide](https://github.com/langfuse/langfuse/blob/main/CONTRIBUTING.md) for organization-wide guidance.
+See the [main CONTRIBUTING.md](https://github.com/langfuse/langfuse/blob/main/CONTRIBUTING.md) to learn how to contribute to Langfuse and its roadmap.
 
 ## Local Development
 

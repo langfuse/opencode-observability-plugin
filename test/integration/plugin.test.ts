@@ -1221,6 +1221,274 @@ describe.sequential("built plugin", () => {
     ]);
   });
 
+  test("exports one resolvable generation when a provider stream error is retried invisibly", async () => {
+    // opencode retries provider stream errors inside its session processor and
+    // re-streams the same assistant message. The plugin receives no
+    // session.error and no lifecycle event for the aborted attempt - only a
+    // session.status retry - so the retried message must still settle into
+    // exactly one exported generation that subsequent tools can resolve as
+    // their parent.
+    const sessionID = "stream-error-retry-session";
+    const userMessageID = "stream-error-retry-user";
+    const assistantMessageID = "stream-error-retry-assistant";
+    const nextAssistantMessageID = "stream-error-retry-assistant-2";
+    const started = startedAt;
+    const completed = started + 7_000;
+
+    await sendUserMessage({
+      sessionID,
+      messageID: userMessageID,
+      text: "Run a command",
+      started,
+    });
+
+    // Attempt 1: the assistant message starts streaming and emits a partial part.
+    await startAssistantMessage({
+      sessionID,
+      userMessageID,
+      assistantMessageID,
+      started: started + 100,
+    });
+    await emitEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "stream-error-retry-aborted-part",
+          sessionID,
+          messageID: assistantMessageID,
+          type: "text",
+          text: "Partial answer cut off by the provider. ",
+        },
+      },
+    });
+
+    // The stream errors mid-call; opencode reports the retry only as a status.
+    await emitEvent({
+      type: "session.status",
+      properties: {
+        sessionID,
+        status: {
+          type: "retry",
+          attempt: 1,
+          message: "temporary provider failure",
+          next: started + 6_500,
+        },
+      },
+    });
+
+    // Attempt 2: the same assistant message re-streams after the backoff gap.
+    await startAssistantMessage({
+      sessionID,
+      userMessageID,
+      assistantMessageID,
+      started: started + 100,
+    });
+    await emitEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "stream-error-retry-recovered-part",
+          sessionID,
+          messageID: assistantMessageID,
+          type: "text",
+          text: "Recovered answer",
+        },
+      },
+    });
+
+    // The first tool after the retry window.
+    const toolStarted = started + 6_600;
+    const toolCompleted = started + 6_700;
+    const toolPart = {
+      id: "stream-error-retry-tool-part",
+      sessionID,
+      messageID: assistantMessageID,
+      type: "tool" as const,
+      callID: "stream-error-retry-call-1",
+      tool: "bash",
+      state: {
+        status: "running" as const,
+        input: { command: "echo retry" },
+        title: "echo retry",
+        time: { start: toolStarted },
+      },
+    };
+    await emitEvent({
+      type: "message.part.updated",
+      properties: { part: toolPart },
+    });
+    await hooks["tool.execute.before"]?.(
+      { sessionID, callID: toolPart.callID, tool: toolPart.tool },
+      { args: toolPart.state.input },
+    );
+    await hooks["tool.execute.after"]?.(
+      {
+        sessionID,
+        callID: toolPart.callID,
+        tool: toolPart.tool,
+        args: toolPart.state.input,
+      },
+      { title: "echo retry", output: "retry", metadata: {} },
+    );
+    await emitEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          ...toolPart,
+          state: {
+            status: "completed" as const,
+            input: toolPart.state.input,
+            title: "echo retry",
+            output: "retry",
+            metadata: {},
+            time: { start: toolStarted, end: toolCompleted },
+          },
+        },
+      },
+    });
+
+    // Step finish: usage reaches the message before time.completed does.
+    await emitEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: assistantMessageID,
+          sessionID,
+          parentID: userMessageID,
+          role: "assistant",
+          mode: "build",
+          modelID: "test-model",
+          providerID: "test-provider",
+          path: { cwd: "/test", root: "/test" },
+          finish: "stop",
+          cost: 0.01,
+          tokens: {
+            input: 10,
+            output: 5,
+            reasoning: 2,
+            cache: { read: 3, write: 1 },
+          },
+          time: { created: started + 100 },
+        },
+      },
+    });
+
+    // The completed message can be re-delivered after the retry.
+    const completion = {
+      sessionID,
+      userMessageID,
+      assistantMessageID,
+      started: started + 100,
+      completed,
+    };
+    await completeGeneration(completion);
+    await completeGeneration(completion);
+
+    // A tool reported only through the execution hooks after the duplicate
+    // completion must still parent to an exported span.
+    await hooks["tool.execute.before"]?.(
+      { sessionID, callID: "stream-error-retry-call-2", tool: "grep" },
+      { args: { pattern: "retry" } },
+    );
+    await hooks["tool.execute.after"]?.(
+      {
+        sessionID,
+        callID: "stream-error-retry-call-2",
+        tool: "grep",
+        args: { pattern: "retry" },
+      },
+      { title: "grep", output: "1 match", metadata: {} },
+    );
+
+    // The next generation proceeds normally.
+    await startAssistantMessage({
+      sessionID,
+      userMessageID,
+      assistantMessageID: nextAssistantMessageID,
+      started: started + 7_300,
+    });
+    await completeGeneration({
+      sessionID,
+      userMessageID,
+      assistantMessageID: nextAssistantMessageID,
+      started: started + 7_300,
+      completed: started + 7_500,
+      text: "Done",
+    });
+
+    const { spans } = await flushSession(sessionID);
+
+    expect(spans.map((span) => span.name).sort()).toEqual(
+      [
+        "opencode.turn",
+        "opencode.message.user",
+        "opencode.generation",
+        "opencode.generation",
+        "bash",
+        "grep",
+      ].sort(),
+    );
+
+    const spanIds = new Set(spans.map((span) => span.spanId));
+    for (const span of spans) {
+      if (span.parentSpanId) {
+        expect(spanIds.has(span.parentSpanId)).toBe(true);
+      }
+    }
+
+    const retriedGenerations = spans.filter((span) => {
+      if (span.name !== "opencode.generation") {
+        return false;
+      }
+
+      const metadata = getJsonAttribute(span, "langfuse.observation.metadata");
+      return (
+        typeof metadata === "object" &&
+        metadata !== null &&
+        "messageID" in metadata &&
+        metadata.messageID === assistantMessageID
+      );
+    });
+    expect(retriedGenerations).toHaveLength(1);
+    const generation = retriedGenerations[0];
+
+    expect(generation.startTimeUnixNano).toBe(
+      (BigInt(started + 100) * 1_000_000n).toString(),
+    );
+    expect(generation.endTimeUnixNano).toBe(
+      (BigInt(completed) * 1_000_000n).toString(),
+    );
+    expect(generation.status?.code ?? 0).not.toBe(2);
+    expect(
+      getJsonAttribute(generation, "langfuse.observation.usage_details"),
+    ).toEqual({
+      input: 10,
+      output: 5,
+      reasoning: 2,
+      cache_read: 3,
+      cache_write: 1,
+      total: 17,
+    });
+    expect(getJsonAttribute(generation, "langfuse.observation.output")).toEqual(
+      [
+        expect.objectContaining({
+          role: "assistant",
+          content: expect.stringContaining("Recovered answer"),
+          tool_calls: [
+            {
+              id: "stream-error-retry-call-1",
+              name: "bash",
+              arguments: JSON.stringify({ command: "echo retry" }),
+            },
+          ],
+        }),
+      ],
+    );
+
+    expect(getSpan(spans, "bash").parentSpanId).toBe(generation.spanId);
+    expect(getSpan(spans, "grep").parentSpanId).toBe(generation.spanId);
+  });
+
   test("continues tracing when available tool discovery fails", async () => {
     const sessionID = "tool-discovery-failure-session";
     toolListShouldFail = true;

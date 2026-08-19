@@ -348,6 +348,44 @@ const formatHookError = (error: unknown) => {
   }
 };
 
+const flattenMcpContent = (content: unknown[]) =>
+  content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (part && typeof part === "object") {
+        const record = part as Record<string, unknown>;
+        if (typeof record.text === "string") return record.text;
+        if (typeof record.type === "string") return `[${record.type}]`;
+      }
+      return "";
+    })
+    .filter((text) => text.length > 0)
+    .join("\n");
+
+const normalizeToolResult = (tool: string, output: unknown) => {
+  const record =
+    output && typeof output === "object"
+      ? (output as Record<string, unknown>)
+      : undefined;
+  const title = typeof record?.title === "string" ? record.title : tool;
+
+  if (typeof record?.output === "string") {
+    return { title, output: record.output, unexpected: false };
+  }
+  if (Array.isArray(record?.content)) {
+    return {
+      title,
+      output: flattenMcpContent(record.content),
+      unexpected: false,
+    };
+  }
+  if (output === undefined || output === null) {
+    return { title, output: "", unexpected: false };
+  }
+
+  return { title, output: "", unexpected: true };
+};
+
 const createShutdownOnce = (langfuse: LangfuseClient) => {
   let shutdownPromise: Promise<void> | undefined;
 
@@ -549,17 +587,28 @@ const main = Effect.gen(function* () {
     "tool.execute.after": (input, output) =>
       runHook(
         "tool.execute.after",
-        Effect.try({
-          try: () =>
-            langfuse.traceToolEnd({
-              sessionID: input.sessionID,
-              callID: input.callID,
-              tool: input.tool,
-              args: input.args,
-              title: output.title,
-              output: output.output,
-            }),
-          catch: (error) => error,
+        Effect.gen(function* () {
+          const normalized = normalizeToolResult(input.tool, output);
+
+          if (normalized.unexpected) {
+            yield* log(
+              "warn",
+              `Tool "${input.tool}" returned an unrecognized result shape; recording empty output`,
+            );
+          }
+
+          yield* Effect.try({
+            try: () =>
+              langfuse.traceToolEnd({
+                sessionID: input.sessionID,
+                callID: input.callID,
+                tool: input.tool,
+                args: input.args,
+                title: normalized.title,
+                output: normalized.output,
+              }),
+            catch: (error) => error,
+          });
         }),
       ),
   };

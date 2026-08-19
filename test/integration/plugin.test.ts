@@ -729,6 +729,24 @@ describe.sequential("built plugin", () => {
       },
       { title: "README.md", output: "# Project", metadata: {} },
     );
+    const mcpCallID = "nested-observations-mcp-call";
+    await hooks["tool.execute.before"]?.(
+      { sessionID, callID: mcpCallID, tool: "mcp_test_tool" },
+      { args: { query: "test" } },
+    );
+    await hooks["tool.execute.after"]?.(
+      {
+        sessionID,
+        callID: mcpCallID,
+        tool: "mcp_test_tool",
+        args: { query: "test" },
+      },
+      {
+        content: [{ type: "text", text: "MCP tool result" }],
+      } as unknown as Parameters<
+        NonNullable<PluginHooks["tool.execute.after"]>
+      >[1],
+    );
     await emitEvent({
       type: "message.part.updated",
       properties: {
@@ -816,6 +834,7 @@ describe.sequential("built plugin", () => {
         "opencode.message.user",
         "opencode.generation",
         "read",
+        "mcp_test_tool",
         "webfetch",
         "opencode.generation.retry",
         "opencode.generation.compaction",
@@ -864,6 +883,11 @@ describe.sequential("built plugin", () => {
     expect(getJsonAttribute(tool, "langfuse.observation.output")).toEqual({
       title: "README.md",
       output: "# Project",
+    });
+    const mcpTool = getSpan(spans, "mcp_test_tool");
+    expect(getJsonAttribute(mcpTool, "langfuse.observation.output")).toEqual({
+      title: "mcp_test_tool",
+      output: "MCP tool result",
     });
     expect(tool.traceId).toBe(generation.traceId);
     expect(tool.parentSpanId).toBe(generation.spanId);

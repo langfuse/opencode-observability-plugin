@@ -186,8 +186,7 @@ const getJsonAttribute = (span: OtlpSpan, key: string) => {
     throw new Error(`Expected ${span.name} attribute ${key} to be JSON`);
   }
 
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
-  return JSON.parse(value) as unknown;
+  return Schema.decodeUnknownSync(Schema.parseJson(Schema.Unknown))(value);
 };
 
 const getSpan = (spans: OtlpSpan[], name: string) => {

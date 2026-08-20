@@ -1073,8 +1073,7 @@ export class LangfuseClient {
     if (
       !this.traceState.activeToolObservations.has(input.callID) &&
       (input.sessionID ?? "") &&
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-      input.tool
+      (input.tool ?? "")
     ) {
       this.traceToolStart({
         sessionID: input.sessionID,

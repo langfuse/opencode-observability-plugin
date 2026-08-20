@@ -1168,8 +1168,7 @@ export class LangfuseClient {
   private getSessionParentSpan(sessionID: string) {
     const parentSessionID = this.traceState.sessionParentIds.get(sessionID);
 
-    // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
-    if (!(parentSessionID != null)) {
+    if (parentSessionID == null) {
       return undefined;
     }
 

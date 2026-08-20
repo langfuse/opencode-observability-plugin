@@ -1177,8 +1177,7 @@ export class LangfuseClient {
   private getSessionParentSpan(sessionID: string) {
     const parentSessionID = this.traceState.sessionParentIds.get(sessionID);
 
-    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-    if (!parentSessionID) {
+    if (!(parentSessionID ?? "")) {
       return undefined;
     }
 

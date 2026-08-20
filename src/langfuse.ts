@@ -468,7 +468,7 @@ export class LangfuseClient {
         span,
         snapshot: input.snapshot,
       });
-      if (messageID ?? "") {
+      if (messageID != null) {
         const step = this.traceState.activeGenerationSteps.get(input.sessionID);
         if (step) {
           this.traceState.activeGenerationStepsByMessageId.set(messageID, step);

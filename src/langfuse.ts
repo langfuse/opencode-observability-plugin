@@ -423,8 +423,7 @@ export class LangfuseClient {
       return;
     }
 
-    // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
-    if (!(messageID != null) && existingStep) {
+    if (messageID == null && existingStep) {
       return;
     }
 

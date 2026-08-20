@@ -868,8 +868,7 @@ export class LangfuseClient {
       step.span.recordException(input.error);
       step.span.end(new Date(input.completed));
       const messageID = input.assistantMessageID ?? step.messageID;
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-      if (messageID) {
+      if (messageID ?? "") {
         this.traceState.activeGenerationStepsByMessageId.delete(messageID);
       }
 

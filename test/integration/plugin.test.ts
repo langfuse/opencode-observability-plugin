@@ -519,7 +519,7 @@ afterAll(async () => {
       LANGFUSE_USER_ID: originalEnvironment.userId,
     })) {
       if (value === undefined) {
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- Existing violation; fix separately.
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- Existing violation tracked for incremental cleanup.
         delete process.env[name];
       } else {
         process.env[name] = value;

@@ -194,8 +194,7 @@ export class LangfuseClient {
 
     for (const [activeSessionID, observation] of this.traceState
       .latestTurnObservationsBySession) {
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-      if (!sessionID || observation.sessionID === sessionID) {
+      if (!(sessionID ?? "") || observation.sessionID === sessionID) {
         this.traceState.latestTurnObservationsBySession.delete(activeSessionID);
       }
     }

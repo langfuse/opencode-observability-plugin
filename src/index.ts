@@ -429,6 +429,7 @@ const normalizeToolResult = (tool: string, output: unknown) => {
     return {
       title: nativeResult.value.title,
       output: nativeResult.value.output,
+      isError: false,
       unexpected: false,
     };
   }
@@ -438,14 +439,15 @@ const normalizeToolResult = (tool: string, output: unknown) => {
     return {
       title: tool,
       output: flattenMcpContent(mcpResult.value.content),
+      isError: mcpResult.value.isError === true,
       unexpected: false,
     };
   }
   if (output === undefined || output === null) {
-    return { title: tool, output: "", unexpected: false };
+    return { title: tool, output: "", isError: false, unexpected: false };
   }
 
-  return { title: tool, output: "", unexpected: true };
+  return { title: tool, output: "", isError: false, unexpected: true };
 };
 
 const createShutdownOnce = (langfuse: LangfuseClient) => {
@@ -657,6 +659,22 @@ const main = Effect.gen(function* () {
               "warn",
               `Tool "${input.tool}" returned an unrecognized result shape; recording empty output`,
             );
+          }
+
+          if (normalized.isError) {
+            yield* Effect.sync(() =>
+              langfuse.traceToolError({
+                sessionID: input.sessionID,
+                callID: input.callID,
+                tool: input.tool,
+                args: input.args,
+                error:
+                  normalized.output ||
+                  `MCP tool "${input.tool}" returned an error`,
+                completed: Date.now(),
+              }),
+            );
+            return;
           }
 
           yield* Effect.try({

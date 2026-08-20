@@ -593,7 +593,7 @@ export class LangfuseClient {
         messageID: input.messageID,
       } satisfies TurnObservation;
 
-      if (input.messageID ?? "") {
+      if (input.messageID != null) {
         this.traceState.turnObservationsByMessageId.set(
           input.messageID,
           observation,

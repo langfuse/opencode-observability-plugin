@@ -341,8 +341,7 @@ export class LangfuseClient {
     );
 
     if (
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-      messageID &&
+      (messageID ?? "") &&
       !existingMessageStep &&
       this.traceState.generationSpansByMessageId.has(messageID)
     ) {

@@ -178,7 +178,7 @@ export class LangfuseClient {
     ]);
 
     for (const observation of observations) {
-      if ((sessionID ?? "") && observation.sessionID !== sessionID) {
+      if (sessionID != null && observation.sessionID !== sessionID) {
         continue;
       }
 

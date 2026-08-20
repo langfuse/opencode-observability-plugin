@@ -1460,7 +1460,7 @@ const makeAppRootSpanProcessor = (tracerName: string) =>
         span.name === "opencode.turn",
       );
     },
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function -- Existing violation; fix separately.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function -- Existing violation tracked for incremental cleanup.
     onEnd: (_span: ReadableSpan) => {},
     shutdown: () => Promise.resolve(),
     forceFlush: () => Promise.resolve(),

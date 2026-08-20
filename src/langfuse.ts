@@ -2,11 +2,7 @@ import { LangfuseSpanProcessor } from "@langfuse/otel";
 import type { Hooks } from "@opencode-ai/plugin";
 import { SpanStatusCode, context, trace } from "@opentelemetry/api";
 import type { Span as ApiSpan, Tracer } from "@opentelemetry/api";
-import type {
-  ReadableSpan,
-  Span,
-  SpanProcessor,
-} from "@opentelemetry/sdk-trace-base";
+import type { Span, SpanProcessor } from "@opentelemetry/sdk-trace-base";
 import {
   defaultResource,
   detectResources,
@@ -1455,8 +1451,7 @@ const makeAppRootSpanProcessor = (tracerName: string) =>
         span.name === "opencode.turn",
       );
     },
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function -- Existing violation tracked for incremental cleanup.
-    onEnd: (_span: ReadableSpan) => {},
+    onEnd: () => undefined,
     shutdown: () => Promise.resolve(),
     forceFlush: () => Promise.resolve(),
   }) satisfies SpanProcessor;

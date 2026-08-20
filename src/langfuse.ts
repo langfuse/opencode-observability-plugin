@@ -279,8 +279,7 @@ export class LangfuseClient {
 
     this.traceState.tracedReasoningIds.add(reasoningTraceKey);
 
-    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-    if (!input.messageID) {
+    if (!(input.messageID ?? "")) {
       return;
     }
 

@@ -12,88 +12,13 @@ import {
   type ToolDefinition,
 } from "./langfuse.js";
 import { OpencodeClientService } from "./opencode.js";
+import {
+  McpContentSchema,
+  McpToolResultSchema,
+  NativeToolResultSchema,
+  type OpencodeEvent,
+} from "./schema.js";
 import { log } from "./utils.js";
-
-// opencode emits these session.next.* events at runtime, but the published
-// @opencode-ai/plugin Hooks["event"] type still omits them from its Event union.
-type SessionNextEvent =
-  | {
-      id: string;
-      type: "session.next.step.started";
-      properties: {
-        sessionID: string;
-        timestamp: number;
-        assistantMessageID?: string;
-        agent: string;
-        model: Parameters<
-          LangfuseClient["startActiveGenerationStep"]
-        >[0]["model"];
-        snapshot?: string;
-      };
-    }
-  | {
-      id: string;
-      type: "session.next.step.ended";
-      properties: { sessionID: string; timestamp: number };
-    }
-  | {
-      id: string;
-      type: "session.next.step.failed";
-      properties: {
-        sessionID: string;
-        timestamp: number;
-        assistantMessageID?: string;
-        error: { message: string };
-      };
-    }
-  | {
-      id: string;
-      type: "session.next.tool.called";
-      properties: {
-        sessionID: string;
-        timestamp: number;
-        assistantMessageID?: string;
-        callID: string;
-        tool: string;
-        input: Record<string, unknown>;
-        provider: { executed: boolean; metadata?: unknown };
-      };
-    }
-  | {
-      id: string;
-      type: "session.next.retried";
-      properties: {
-        sessionID: string;
-        timestamp: number;
-        attempt: number;
-        error: unknown;
-      };
-    }
-  | {
-      id: string;
-      type: "session.next.reasoning.ended";
-      properties: {
-        sessionID: string;
-        timestamp: number;
-        assistantMessageID: string;
-        reasoningID: string;
-        text: string;
-      };
-    }
-  | {
-      id: string;
-      type: "session.next.compaction.ended";
-      properties: {
-        sessionID: string;
-        timestamp: number;
-        text: string;
-        include?: string;
-      };
-    };
-
-type OpencodeEvent =
-  | Parameters<NonNullable<Hooks["event"]>>[0]["event"]
-  | SessionNextEvent;
 
 const LangfuseCredentialsSchema = Schema.Struct({
   publicKey: Schema.NonEmptyString,
@@ -372,59 +297,6 @@ const formatHookError = (error: unknown) => {
     return String(error);
   }
 };
-
-// https://github.com/anomalyco/opencode/blob/v1.15.13/packages/opencode/src/tool/tool.ts#L46-L52
-const NativeToolResultSchema = Schema.Struct({
-  title: Schema.String,
-  metadata: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
-  output: Schema.String,
-  attachments: Schema.optional(Schema.Array(Schema.Unknown)),
-});
-
-// OpenCode returns CallToolResultSchema from its MCP adapter and passes that raw
-// value to the hook before normalization:
-// https://github.com/anomalyco/opencode/blob/v1.15.13/packages/opencode/src/mcp/index.ts#L158-L187
-const McpToolResultSchema = Schema.Struct({
-  content: Schema.Array(Schema.Unknown),
-  structuredContent: Schema.optional(
-    Schema.Record({ key: Schema.String, value: Schema.Unknown }),
-  ),
-  isError: Schema.optional(Schema.Boolean),
-  _meta: Schema.optional(
-    Schema.Record({ key: Schema.String, value: Schema.Unknown }),
-  ),
-});
-
-const McpResourceContentsSchema = Schema.Union(
-  Schema.Struct({
-    uri: Schema.String,
-    mimeType: Schema.optional(Schema.String),
-    text: Schema.String,
-  }),
-  Schema.Struct({
-    uri: Schema.String,
-    mimeType: Schema.optional(Schema.String),
-    blob: Schema.String,
-  }),
-);
-
-// These are the MCP content variants OpenCode handles when creating its native
-// output: https://github.com/anomalyco/opencode/blob/v1.15.13/packages/opencode/src/session/tools.ts#L153-L176
-const McpContentSchema = Schema.Union(
-  Schema.Struct({
-    type: Schema.Literal("text"),
-    text: Schema.String,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("image"),
-    data: Schema.String,
-    mimeType: Schema.String,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("resource"),
-    resource: McpResourceContentsSchema,
-  }),
-);
 
 const flattenMcpContent = (content: readonly unknown[]) => {
   const textParts: string[] = [];

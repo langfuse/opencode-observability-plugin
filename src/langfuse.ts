@@ -1104,16 +1104,13 @@ export class LangfuseClient {
     });
     span.recordException({ message: input.error });
     span.end(new Date(input.completed));
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions -- Existing violations; fix separately.
-    if (observation) {
-      this.rememberToolResult({
-        sessionID: observation.sessionID,
-        callID: input.callID,
-        tool: input.tool ?? observation.tool,
-        content: input.error,
-        messageID: input.messageID,
-      });
-    }
+    this.rememberToolResult({
+      sessionID: observation.sessionID,
+      callID: input.callID,
+      tool: input.tool ?? observation.tool,
+      content: input.error,
+      messageID: input.messageID,
+    });
     this.traceState.activeToolObservations.delete(input.callID);
     this.traceState.finalizedToolCallIds.add(input.callID);
     this.traceState.toolMessageIdsByCallId.delete(input.callID);

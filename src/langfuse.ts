@@ -836,17 +836,17 @@ export class LangfuseClient {
     const activeStep = this.traceState.activeGenerationSteps.get(
       input.sessionID,
     );
-    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-    const step = input.assistantMessageID
-      ? (this.traceState.activeGenerationStepsByMessageId.get(
-          input.assistantMessageID,
-        ) ??
-        (activeStep?.messageID === input.assistantMessageID ||
-        // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-        !activeStep?.messageID
-          ? activeStep
-          : undefined))
-      : activeStep;
+    const step =
+      (input.assistantMessageID ?? "")
+        ? (this.traceState.activeGenerationStepsByMessageId.get(
+            input.assistantMessageID,
+          ) ??
+          (activeStep?.messageID === input.assistantMessageID ||
+          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
+          !activeStep?.messageID
+            ? activeStep
+            : undefined))
+        : activeStep;
 
     if (step) {
       step.span.setAttribute(

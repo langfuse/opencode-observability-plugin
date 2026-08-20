@@ -114,7 +114,7 @@ const loadLangfuseCredentials = Effect.gen(function* () {
   const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
   const secretKey = process.env.LANGFUSE_SECRET_KEY;
 
-  if (Boolean(publicKey) && Boolean(secretKey)) {
+  if ((publicKey ?? "") !== "" && Boolean(secretKey)) {
     return {
       publicKey,
       secretKey,

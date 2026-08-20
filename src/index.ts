@@ -114,6 +114,7 @@ const loadLangfuseCredentials = Effect.gen(function* () {
   const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
   const secretKey = process.env.LANGFUSE_SECRET_KEY;
 
+  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
   if (publicKey && secretKey) {
     return {
       publicKey,
@@ -158,6 +159,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
       langfuse.endActiveGenerationSteps(sessionID);
       langfuse.endActiveTurnObservations(sessionID);
 
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       if (sessionID) {
         langfuse.clearSessionTraceState(sessionID);
       } else {
@@ -196,6 +198,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
       });
     }
 
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
     if (event.type === "session.error" && event.properties.sessionID) {
       langfuse.traceSessionError({
         sessionID: event.properties.sessionID,
@@ -271,6 +274,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
 
     if (
       event.type === "session.next.tool.called" &&
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       event.properties.assistantMessageID
     ) {
       langfuse.rememberToolCall({
@@ -336,6 +340,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
         started: message.time.created,
       });
 
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       if (!message.time.completed) {
         return;
       }
@@ -588,6 +593,7 @@ const main = Effect.gen(function* () {
       runHook(
         "config",
         Effect.gen(function* () {
+          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
           if (!config.experimental?.openTelemetry) {
             yield* log(
               "warn",

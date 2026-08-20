@@ -110,6 +110,7 @@ export class LangfuseClient {
   endActiveToolObservations(sessionID?: string, error?: SessionErrorInfo) {
     for (const [callID, observation] of this.traceState
       .activeToolObservations) {
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       if (sessionID && observation.sessionID !== sessionID) {
         continue;
       }
@@ -138,6 +139,7 @@ export class LangfuseClient {
     ]);
 
     for (const step of activeSteps) {
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       if (sessionID && step.sessionID !== sessionID) {
         continue;
       }
@@ -157,6 +159,7 @@ export class LangfuseClient {
 
     for (const [activeSessionID, step] of this.traceState
       .activeGenerationSteps) {
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       if (!sessionID || step.sessionID === sessionID) {
         this.traceState.activeGenerationSteps.delete(activeSessionID);
         this.traceState.generationParentSpans.delete(activeSessionID);
@@ -165,6 +168,7 @@ export class LangfuseClient {
 
     for (const [messageID, step] of this.traceState
       .activeGenerationStepsByMessageId) {
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       if (!sessionID || step.sessionID === sessionID) {
         this.traceState.activeGenerationStepsByMessageId.delete(messageID);
       }
@@ -178,6 +182,7 @@ export class LangfuseClient {
     ]);
 
     for (const observation of observations) {
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       if (sessionID && observation.sessionID !== sessionID) {
         continue;
       }
@@ -187,6 +192,7 @@ export class LangfuseClient {
 
     for (const [messageID, observation] of this.traceState
       .turnObservationsByMessageId) {
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       if (!sessionID || observation.sessionID === sessionID) {
         this.traceState.turnObservationsByMessageId.delete(messageID);
       }
@@ -194,6 +200,7 @@ export class LangfuseClient {
 
     for (const [activeSessionID, observation] of this.traceState
       .latestTurnObservationsBySession) {
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       if (!sessionID || observation.sessionID === sessionID) {
         this.traceState.latestTurnObservationsBySession.delete(activeSessionID);
       }
@@ -204,6 +211,7 @@ export class LangfuseClient {
     sessionID: string;
     parentSessionID?: string;
   }) {
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
     if (input.parentSessionID) {
       this.traceState.sessionParentIds.set(
         input.sessionID,
@@ -279,6 +287,7 @@ export class LangfuseClient {
 
     this.traceState.tracedReasoningIds.add(reasoningTraceKey);
 
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
     if (!input.messageID) {
       return;
     }
@@ -332,6 +341,7 @@ export class LangfuseClient {
     snapshot?: string;
   }) {
     const messageID = input.assistantMessageID;
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
     const existingMessageStep = messageID
       ? this.traceState.activeGenerationStepsByMessageId.get(messageID)
       : undefined;
@@ -340,6 +350,7 @@ export class LangfuseClient {
     );
 
     if (
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       messageID &&
       !existingMessageStep &&
       this.traceState.generationSpansByMessageId.has(messageID)
@@ -347,6 +358,7 @@ export class LangfuseClient {
       return;
     }
 
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
     if (existingMessageStep && messageID) {
       const updatedStep = {
         ...existingMessageStep,
@@ -385,6 +397,7 @@ export class LangfuseClient {
       return;
     }
 
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
     if (existingStep && !existingStep.messageID && messageID) {
       const updatedStep = {
         ...existingStep,
@@ -424,6 +437,7 @@ export class LangfuseClient {
       return;
     }
 
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
     if (!messageID && existingStep) {
       return;
     }
@@ -463,6 +477,7 @@ export class LangfuseClient {
         span,
         snapshot: input.snapshot,
       });
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       if (messageID) {
         const step = this.traceState.activeGenerationSteps.get(input.sessionID);
         if (step) {
@@ -483,6 +498,7 @@ export class LangfuseClient {
     tools?: ToolDefinition[];
   }) {
     if (
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       input.messageID &&
       this.traceState.tracedMessageIds.has(input.messageID)
     ) {
@@ -533,6 +549,7 @@ export class LangfuseClient {
     const generationInput = [
       {
         ...formattedMessage,
+        // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
         ...(input.tools?.length ? { tools: input.tools } : {}),
       },
     ];
@@ -542,6 +559,7 @@ export class LangfuseClient {
       generationInput,
     );
 
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
     if (input.messageID) {
       this.traceState.tracedMessageIds.add(input.messageID);
     }
@@ -588,6 +606,7 @@ export class LangfuseClient {
         messageID: input.messageID,
       } satisfies TurnObservation;
 
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       if (input.messageID) {
         this.traceState.turnObservationsByMessageId.set(
           input.messageID,
@@ -714,6 +733,7 @@ export class LangfuseClient {
     );
     const step =
       this.traceState.activeGenerationStepsByMessageId.get(input.messageID) ??
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       (activeStep?.messageID === input.messageID || !activeStep?.messageID
         ? activeStep
         : undefined);
@@ -834,11 +854,13 @@ export class LangfuseClient {
     const activeStep = this.traceState.activeGenerationSteps.get(
       input.sessionID,
     );
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
     const step = input.assistantMessageID
       ? (this.traceState.activeGenerationStepsByMessageId.get(
           input.assistantMessageID,
         ) ??
         (activeStep?.messageID === input.assistantMessageID ||
+        // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
         !activeStep?.messageID
           ? activeStep
           : undefined))
@@ -865,6 +887,7 @@ export class LangfuseClient {
       step.span.recordException(input.error);
       step.span.end(new Date(input.completed));
       const messageID = input.assistantMessageID ?? step.messageID;
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       if (messageID) {
         this.traceState.activeGenerationStepsByMessageId.delete(messageID);
       }
@@ -940,6 +963,7 @@ export class LangfuseClient {
 
     turn.span.end();
 
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
     if (turn.messageID) {
       this.traceState.turnObservationsByMessageId.delete(turn.messageID);
     }
@@ -1069,7 +1093,9 @@ export class LangfuseClient {
 
     if (
       !this.traceState.activeToolObservations.has(input.callID) &&
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       input.sessionID &&
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       input.tool
     ) {
       this.traceToolStart({
@@ -1101,7 +1127,7 @@ export class LangfuseClient {
     });
     span.recordException({ message: input.error });
     span.end(new Date(input.completed));
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Existing violation tracked for incremental cleanup.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions -- Existing violations; fix separately.
     if (observation) {
       this.rememberToolResult({
         sessionID: observation.sessionID,
@@ -1164,6 +1190,7 @@ export class LangfuseClient {
 
   private getTurnObservation(sessionID: string, messageID: string | undefined) {
     return (
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       (messageID
         ? this.traceState.turnObservationsByMessageId.get(messageID)
         : undefined) ??
@@ -1174,6 +1201,7 @@ export class LangfuseClient {
   private getSessionParentSpan(sessionID: string) {
     const parentSessionID = this.traceState.sessionParentIds.get(sessionID);
 
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
     if (!parentSessionID) {
       return undefined;
     }
@@ -1191,6 +1219,7 @@ export class LangfuseClient {
     messageID?: string,
   ) {
     const parentSpan =
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       (messageID
         ? this.traceState.generationSpansByMessageId.get(messageID)
         : undefined) ??
@@ -1254,6 +1283,7 @@ export class LangfuseClient {
     this.traceState.generationInputsBySession.delete(sessionID);
     this.traceState.toolResultSourceMessageIdsBySession.delete(sessionID);
 
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
     if (!sourceMessageID) {
       return input;
     }
@@ -1284,6 +1314,7 @@ export class LangfuseClient {
     });
     this.traceState.generationInputsBySession.set(input.sessionID, toolResults);
 
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
     if (messageID) {
       this.traceState.toolResultSourceMessageIdsBySession.set(
         input.sessionID,
@@ -1299,7 +1330,7 @@ export class LangfuseClient {
 
     if (
       "data" in error &&
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Existing violation tracked for incremental cleanup.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions -- Existing violations; fix separately.
       error.data &&
       typeof error.data === "object" &&
       "message" in error.data &&
@@ -1515,12 +1546,14 @@ export const createLangfuseClient = (input: {
       resource: defaultResource()
         .merge(detectResources({ detectors: [envDetector] }))
         .merge(
+          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
           input.serviceName
             ? resourceFromAttributes({ "service.name": input.serviceName })
             : null,
         ),
       spanProcessors: [
         makePluginVersionSpanProcessor(),
+        // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
         ...(input.userId ? [makeUserIdSpanProcessor(input.userId)] : []),
         processor,
         makeAppRootSpanProcessor(traceState.tracerName),

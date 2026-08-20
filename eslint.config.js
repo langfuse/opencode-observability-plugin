@@ -1,9 +1,11 @@
+import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 export default [
   {
     ignores: ["dist/**"],
   },
+  js.configs.recommended,
   {
     files: ["**/*.{js,mjs,cjs,ts}"],
     rules: {
@@ -27,6 +29,10 @@ export default [
     },
     rules: {
       "@typescript-eslint/consistent-type-definitions": ["error", "type"],
+      "@typescript-eslint/prefer-readonly": "error",
+      "@typescript-eslint/strict-boolean-expressions": "error",
+      "@typescript-eslint/strict-void-return": "error",
+      "@typescript-eslint/switch-exhaustiveness-check": "error",
     },
   },
 ];

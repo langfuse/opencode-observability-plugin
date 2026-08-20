@@ -338,6 +338,7 @@ const completeGeneration = async (input: {
   completed: number;
   text?: string;
 }) => {
+  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
   if (input.text) {
     await emitEvent({
       type: "message.part.updated",
@@ -439,7 +440,9 @@ beforeAll(async () => {
   server = createServer((request, response) => {
     const chunks: Buffer[] = [];
 
+    // eslint-disable-next-line @typescript-eslint/strict-void-return -- Existing violation; fix separately.
     request.on("error", (error) => collectorErrors.push(error));
+    // eslint-disable-next-line @typescript-eslint/strict-void-return -- Existing violation; fix separately.
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
       try {
@@ -471,6 +474,7 @@ beforeAll(async () => {
   });
 
   const address = server.address();
+  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
   if (!address || typeof address === "string") {
     throw new Error("Expected the test collector to listen on a TCP port");
   }
@@ -506,6 +510,7 @@ afterEach(async () => {
 afterAll(async () => {
   try {
     await new Promise<void>((resolve, reject) =>
+      // eslint-disable-next-line @typescript-eslint/strict-void-return -- Existing violation; fix separately.
       server.close((error) => {
         // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- Existing violation tracked for incremental cleanup.
         error ? reject(error) : resolve();
@@ -1633,6 +1638,7 @@ describe.sequential("built plugin", () => {
 
     const spanIds = new Set(spans.map((span) => span.spanId));
     for (const span of spans) {
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
       if (span.parentSpanId) {
         expect(spanIds.has(span.parentSpanId)).toBe(true);
       }
@@ -2048,12 +2054,14 @@ describe.sequential("built plugin", () => {
       process.env.OTEL_EXPORTER_OTLP_TRACES_TIMEOUT;
     process.env.OTEL_EXPORTER_OTLP_TRACES_TIMEOUT = "100";
     const unavailableServer = createServer();
+    // eslint-disable-next-line @typescript-eslint/strict-void-return -- Existing violation; fix separately.
     unavailableServer.on("connection", (socket) => socket.destroy());
     await new Promise<void>((resolve, reject) => {
       unavailableServer.once("error", reject);
       unavailableServer.listen(0, "127.0.0.1", resolve);
     });
     const address = unavailableServer.address();
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
     if (!address || typeof address === "string") {
       throw new Error("Expected the unavailable collector to use a TCP port");
     }
@@ -2079,6 +2087,7 @@ describe.sequential("built plugin", () => {
       try {
         await disposeHooks();
         await new Promise<void>((resolve, reject) =>
+          // eslint-disable-next-line @typescript-eslint/strict-void-return -- Existing violation; fix separately.
           unavailableServer.close((error) => {
             // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- Existing violation tracked for incremental cleanup.
             error ? reject(error) : resolve();

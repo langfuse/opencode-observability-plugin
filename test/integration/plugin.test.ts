@@ -1673,7 +1673,7 @@ describe.sequential("built plugin", () => {
       [
         expect.objectContaining({
           role: "assistant",
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Existing violation; fix separately.
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Existing violation tracked for incremental cleanup.
           content: expect.stringContaining("Recovered answer"),
           tool_calls: [
             {

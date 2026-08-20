@@ -842,8 +842,7 @@ export class LangfuseClient {
             input.assistantMessageID,
           ) ??
           (activeStep?.messageID === input.assistantMessageID ||
-          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-          !activeStep?.messageID
+          !(activeStep?.messageID ?? "")
             ? activeStep
             : undefined))
         : activeStep;

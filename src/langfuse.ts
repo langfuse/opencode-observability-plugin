@@ -1299,7 +1299,7 @@ export class LangfuseClient {
 
     if (
       "data" in error &&
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Existing violation; fix separately.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Existing violation tracked for incremental cleanup.
       error.data &&
       typeof error.data === "object" &&
       "message" in error.data &&

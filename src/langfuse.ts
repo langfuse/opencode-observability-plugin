@@ -138,7 +138,7 @@ export class LangfuseClient {
     ]);
 
     for (const step of activeSteps) {
-      if ((sessionID ?? "") && step.sessionID !== sessionID) {
+      if (sessionID != null && step.sessionID !== sessionID) {
         continue;
       }
 

@@ -139,13 +139,12 @@ const loadLangfuseCredentials = Effect.gen(function* () {
   );
 
   const credentials = yield* Effect.tryPromise({
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- Existing violation tracked for incremental cleanup.
-    try: async () => JSON.parse(await readFile(configPath, "utf8")),
+    try: async () =>
+      Schema.decodeUnknownSync(Schema.parseJson(LangfuseCredentialsSchema))(
+        await readFile(configPath, "utf8"),
+      ),
     catch: () => new MissingLangfuseCredentials(),
-  }).pipe(
-    Effect.flatMap(Schema.decodeUnknown(LangfuseCredentialsSchema)),
-    Effect.mapError(() => new MissingLangfuseCredentials()),
-  );
+  }).pipe(Effect.mapError(() => new MissingLangfuseCredentials()));
 
   if (!credentials.publicKey || !credentials.secretKey) {
     return yield* Effect.fail(new MissingLangfuseCredentials());

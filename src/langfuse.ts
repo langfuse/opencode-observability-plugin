@@ -947,7 +947,7 @@ export class LangfuseClient {
 
     turn.span.end();
 
-    if (turn.messageID ?? "") {
+    if (turn.messageID != null) {
       this.traceState.turnObservationsByMessageId.delete(turn.messageID);
     }
 

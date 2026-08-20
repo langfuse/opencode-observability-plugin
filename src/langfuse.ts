@@ -183,8 +183,7 @@ export class LangfuseClient {
 
     for (const [messageID, observation] of this.traceState
       .turnObservationsByMessageId) {
-      // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
-      if (!(sessionID != null) || observation.sessionID === sessionID) {
+      if (sessionID == null || observation.sessionID === sessionID) {
         this.traceState.turnObservationsByMessageId.delete(messageID);
       }
     }

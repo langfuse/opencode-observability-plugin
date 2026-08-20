@@ -176,6 +176,16 @@ const PluginModuleSchema = Schema.declare(
     typeof input.default === "function",
 );
 
+const McpToolOutputSchema = Schema.declare(
+  (
+    input,
+  ): input is Parameters<NonNullable<PluginHooks["tool.execute.after"]>>[1] =>
+    typeof input === "object" &&
+    input !== null &&
+    "content" in input &&
+    Array.isArray(input.content),
+);
+
 const packageJson = Schema.decodeUnknownSync(
   Schema.parseJson(Schema.Struct({ version: Schema.String })),
 )(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
@@ -829,8 +839,7 @@ describe.sequential("built plugin", () => {
         tool: "mcp_test_tool",
         args: { query: "test" },
       },
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
-      {
+      Schema.decodeUnknownSync(McpToolOutputSchema)({
         content: [
           { type: "text", text: "MCP tool result" },
           {
@@ -842,9 +851,7 @@ describe.sequential("built plugin", () => {
           },
           { type: "image", mimeType: "image/png", data: "aW1hZ2U=" },
         ],
-      } as unknown as Parameters<
-        NonNullable<PluginHooks["tool.execute.after"]>
-      >[1],
+      }),
     );
     const failedMcpCallID = "nested-observations-failed-mcp-call";
     await hooks["tool.execute.before"]?.(

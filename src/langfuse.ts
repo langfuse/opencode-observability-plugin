@@ -1288,7 +1288,7 @@ export class LangfuseClient {
     });
     this.traceState.generationInputsBySession.set(input.sessionID, toolResults);
 
-    if (messageID ?? "") {
+    if (messageID != null) {
       this.traceState.toolResultSourceMessageIdsBySession.set(
         input.sessionID,
         messageID,

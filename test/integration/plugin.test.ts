@@ -14,7 +14,12 @@ import {
   test,
 } from "vitest";
 
-import type { SessionNextEvent } from "../../src/schema.js";
+import type { OpencodeEvent } from "../../src/schema.js";
+
+type SessionNextEvent = Extract<
+  OpencodeEvent,
+  { type: `session.next.${string}` }
+>;
 
 const OtlpValueSchema = Schema.Struct({
   stringValue: Schema.optional(Schema.String),

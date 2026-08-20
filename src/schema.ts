@@ -249,7 +249,7 @@ type CurrentSessionNextEvent =
   | SessionNextCompactionEndedEvent;
 
 // https://github.com/anomalyco/opencode/blob/v1.18.19/packages/schema/src/session-event.ts#L479-L517
-export type SessionNextEvent = LegacySessionNextEvent | CurrentSessionNextEvent;
+type SessionNextEvent = LegacySessionNextEvent | CurrentSessionNextEvent;
 
 // https://github.com/anomalyco/opencode/blob/v1.18.19/packages/plugin/src/index.ts#L222-L224
 export type OpencodeEvent =
@@ -277,7 +277,7 @@ export const McpToolResultSchema = Schema.Struct({
 });
 
 // https://github.com/anomalyco/opencode/blob/v1.18.19/packages/opencode/src/session/tools.ts#L436-L461
-export const McpResourceContentsSchema = Schema.Union(
+const McpResourceContentsSchema = Schema.Union(
   Schema.Struct({
     uri: Schema.String,
     mimeType: Schema.optional(Schema.String),

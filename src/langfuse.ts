@@ -484,8 +484,7 @@ export class LangfuseClient {
     tools?: ToolDefinition[];
   }) {
     if (
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-      input.messageID &&
+      (input.messageID ?? "") &&
       this.traceState.tracedMessageIds.has(input.messageID)
     ) {
       return;

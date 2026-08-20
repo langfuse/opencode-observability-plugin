@@ -341,14 +341,14 @@ export class LangfuseClient {
     );
 
     if (
-      (messageID ?? "") &&
+      messageID != null &&
       !existingMessageStep &&
       this.traceState.generationSpansByMessageId.has(messageID)
     ) {
       return;
     }
 
-    if (existingMessageStep && (messageID ?? "")) {
+    if (existingMessageStep && messageID != null) {
       const updatedStep = {
         ...existingMessageStep,
         agent: input.agent,

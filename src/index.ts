@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { Hooks, Plugin } from "@opencode-ai/plugin";
-import { Data, Effect, Layer, Schema } from "effect";
+import { Data, Effect, Layer, Option, Schema } from "effect";
 
 import {
   LangfuseClientService,
@@ -348,26 +348,73 @@ const formatHookError = (error: unknown) => {
   }
 };
 
-const flattenMcpContent = (content: unknown[]) => {
+// https://github.com/anomalyco/opencode/blob/v1.15.13/packages/opencode/src/tool/tool.ts#L46-L52
+const NativeToolResultSchema = Schema.Struct({
+  title: Schema.String,
+  metadata: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  output: Schema.String,
+  attachments: Schema.optional(Schema.Array(Schema.Unknown)),
+});
+
+// OpenCode returns CallToolResultSchema from its MCP adapter and passes that raw
+// value to the hook before normalization:
+// https://github.com/anomalyco/opencode/blob/v1.15.13/packages/opencode/src/mcp/index.ts#L158-L187
+const McpToolResultSchema = Schema.Struct({
+  content: Schema.Array(Schema.Unknown),
+  structuredContent: Schema.optional(
+    Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  ),
+  isError: Schema.optional(Schema.Boolean),
+  _meta: Schema.optional(
+    Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  ),
+});
+
+const McpResourceContentsSchema = Schema.Union(
+  Schema.Struct({
+    uri: Schema.String,
+    mimeType: Schema.optional(Schema.String),
+    text: Schema.String,
+  }),
+  Schema.Struct({
+    uri: Schema.String,
+    mimeType: Schema.optional(Schema.String),
+    blob: Schema.String,
+  }),
+);
+
+// These are the MCP content variants OpenCode handles when creating its native
+// output: https://github.com/anomalyco/opencode/blob/v1.15.13/packages/opencode/src/session/tools.ts#L153-L176
+const McpContentSchema = Schema.Union(
+  Schema.Struct({
+    type: Schema.Literal("text"),
+    text: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("image"),
+    data: Schema.String,
+    mimeType: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("resource"),
+    resource: McpResourceContentsSchema,
+  }),
+);
+
+const flattenMcpContent = (content: readonly unknown[]) => {
   const textParts: string[] = [];
 
   for (const part of content) {
-    if (!part || typeof part !== "object") continue;
+    const decoded = Schema.decodeUnknownOption(McpContentSchema)(part);
+    if (Option.isNone(decoded)) continue;
 
-    const record = part as Record<string, unknown>;
-    if (record.type === "text" && typeof record.text === "string") {
-      textParts.push(record.text);
+    if (decoded.value.type === "text") {
+      textParts.push(decoded.value.text);
       continue;
     }
 
-    if (record.type === "resource") {
-      const resource =
-        record.resource && typeof record.resource === "object"
-          ? (record.resource as Record<string, unknown>)
-          : undefined;
-      if (typeof resource?.text === "string") {
-        textParts.push(resource.text);
-      }
+    if (decoded.value.type === "resource" && "text" in decoded.value.resource) {
+      textParts.push(decoded.value.resource.text);
     }
   }
 
@@ -375,27 +422,30 @@ const flattenMcpContent = (content: unknown[]) => {
 };
 
 const normalizeToolResult = (tool: string, output: unknown) => {
-  const record =
-    output && typeof output === "object"
-      ? (output as Record<string, unknown>)
-      : undefined;
-  const title = typeof record?.title === "string" ? record.title : tool;
-
-  if (typeof record?.output === "string") {
-    return { title, output: record.output, unexpected: false };
-  }
-  if (Array.isArray(record?.content)) {
+  const nativeResult = Schema.decodeUnknownOption(NativeToolResultSchema)(
+    output,
+  );
+  if (Option.isSome(nativeResult)) {
     return {
-      title,
-      output: flattenMcpContent(record.content),
+      title: nativeResult.value.title,
+      output: nativeResult.value.output,
+      unexpected: false,
+    };
+  }
+
+  const mcpResult = Schema.decodeUnknownOption(McpToolResultSchema)(output);
+  if (Option.isSome(mcpResult)) {
+    return {
+      title: tool,
+      output: flattenMcpContent(mcpResult.value.content),
       unexpected: false,
     };
   }
   if (output === undefined || output === null) {
-    return { title, output: "", unexpected: false };
+    return { title: tool, output: "", unexpected: false };
   }
 
-  return { title, output: "", unexpected: true };
+  return { title: tool, output: "", unexpected: true };
 };
 
 const createShutdownOnce = (langfuse: LangfuseClient) => {

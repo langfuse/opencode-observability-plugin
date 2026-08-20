@@ -1731,22 +1731,29 @@ describe("built plugin", { concurrent: false }, () => {
       cache_write: 1,
       total: 17,
     });
-    expect(getJsonAttribute(generation, "langfuse.observation.output")).toEqual(
-      [
-        expect.objectContaining({
-          role: "assistant",
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Existing violation tracked for incremental cleanup.
-          content: expect.stringContaining("Recovered answer"),
-          tool_calls: [
-            {
-              id: "stream-error-retry-call-1",
-              name: "bash",
-              arguments: JSON.stringify({ command: "echo retry" }),
-            },
-          ],
+    const output = Schema.decodeUnknownSync(
+      Schema.Array(
+        Schema.Struct({
+          role: Schema.Literal("assistant"),
+          content: Schema.String,
+          tool_calls: Schema.Array(
+            Schema.Struct({
+              id: Schema.String,
+              name: Schema.String,
+              arguments: Schema.String,
+            }),
+          ),
         }),
-      ],
-    );
+      ),
+    )(getJsonAttribute(generation, "langfuse.observation.output"));
+    expect(output[0].content).toContain("Recovered answer");
+    expect(output[0].tool_calls).toEqual([
+      {
+        id: "stream-error-retry-call-1",
+        name: "bash",
+        arguments: JSON.stringify({ command: "echo retry" }),
+      },
+    ]);
 
     expect(getSpan(spans, "bash").parentSpanId).toBe(generation.spanId);
     expect(getSpan(spans, "grep").parentSpanId).toBe(generation.spanId);

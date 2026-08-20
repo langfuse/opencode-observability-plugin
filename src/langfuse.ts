@@ -841,12 +841,12 @@ export class LangfuseClient {
       input.sessionID,
     );
     const step =
-      (input.assistantMessageID ?? "")
+      input.assistantMessageID != null
         ? (this.traceState.activeGenerationStepsByMessageId.get(
             input.assistantMessageID,
           ) ??
           (activeStep?.messageID === input.assistantMessageID ||
-          !(activeStep?.messageID ?? "")
+          !(activeStep?.messageID != null)
             ? activeStep
             : undefined))
         : activeStep;

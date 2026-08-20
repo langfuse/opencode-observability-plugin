@@ -1424,8 +1424,7 @@ export class LangfuseClientService extends EffectContext.Tag(
 
 const makeUserIdSpanProcessor = (userId: string) =>
   ({
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- Existing violation tracked for incremental cleanup.
-    onStart: (span: Span, _parentContext: unknown) => {
+    onStart: (span: Span) => {
       span.setAttribute("langfuse.user.id", userId);
     },
     // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function -- Existing violation tracked for incremental cleanup.

@@ -13,43 +13,35 @@ import {
   test,
 } from "vitest";
 
-// eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- Existing violation; fix separately.
-interface OtlpValue {
+type OtlpValue = {
   stringValue?: string;
   boolValue?: boolean;
   intValue?: number;
-}
+};
 
-// eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- Existing violation; fix separately.
-interface OtlpSpan {
+type OtlpSpan = {
   name: string;
   traceId: string;
   spanId: string;
   parentSpanId?: string;
   startTimeUnixNano: string;
   endTimeUnixNano: string;
-  // eslint-disable-next-line @typescript-eslint/array-type -- Existing violation; fix separately.
-  attributes: Array<{ key: string; value: OtlpValue }>;
+  attributes: { key: string; value: OtlpValue }[];
   status?: { code?: number; message?: string };
-  // eslint-disable-next-line @typescript-eslint/array-type -- Existing violation; fix separately.
-  events?: Array<{ name: string }>;
-}
+  events?: { name: string }[];
+};
 
-// eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- Existing violation; fix separately.
-interface CapturedRequest {
+type CapturedRequest = {
   method?: string;
   url?: string;
   headers: IncomingHttpHeaders;
   body: {
-    // eslint-disable-next-line @typescript-eslint/array-type -- Existing violation; fix separately.
-    resourceSpans: Array<{
-      // eslint-disable-next-line @typescript-eslint/array-type -- Existing violation; fix separately.
-      resource?: { attributes?: Array<{ key: string; value: OtlpValue }> };
-      // eslint-disable-next-line @typescript-eslint/array-type -- Existing violation; fix separately.
-      scopeSpans: Array<{ spans: OtlpSpan[] }>;
-    }>;
+    resourceSpans: {
+      resource?: { attributes?: { key: string; value: OtlpValue }[] };
+      scopeSpans: { spans: OtlpSpan[] }[];
+    }[];
   };
-}
+};
 
 type Plugin = (typeof import("../../dist/index.js"))["default"];
 type PluginHooks = Awaited<ReturnType<Plugin>>;

@@ -484,7 +484,9 @@ beforeAll(async () => {
   process.env.LANGFUSE_USER_ID = "test-user";
   delete process.env.LANGFUSE_BASEURL;
 
-  ({ default: plugin } = await import("../../dist/index.js"));
+  const builtPluginUrl = new URL("../../dist/index.js", import.meta.url);
+  const builtPlugin: unknown = await import(builtPluginUrl.href);
+  plugin = (builtPlugin as { default: Plugin }).default;
 });
 
 beforeEach(async () => {

@@ -2154,7 +2154,7 @@ describe.sequential("built plugin", () => {
     } finally {
       for (const [name, value] of Object.entries(originalValues)) {
         if (value === undefined) {
-          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- Existing violation; fix separately.
+          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- Existing violation tracked for incremental cleanup.
           delete process.env[name];
         } else {
           process.env[name] = value;

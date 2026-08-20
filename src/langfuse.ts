@@ -204,7 +204,7 @@ export class LangfuseClient {
     sessionID: string;
     parentSessionID?: string;
   }) {
-    if (input.parentSessionID ?? "") {
+    if (input.parentSessionID != null) {
       this.traceState.sessionParentIds.set(
         input.sessionID,
         input.parentSessionID,

@@ -341,7 +341,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
         started: message.time.created,
       });
 
-      if (!(message.time.completed ?? 0)) {
+      if (message.time.completed === undefined) {
         return;
       }
 

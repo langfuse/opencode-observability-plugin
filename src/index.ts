@@ -664,14 +664,14 @@ const main = Effect.gen(function* () {
       runHook(
         "tool.execute.before",
         Effect.try({
-          try: () =>
-            // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- Existing violation; fix separately.
+          try: () => {
             langfuse.traceToolStart({
               sessionID: input.sessionID,
               callID: input.callID,
               tool: input.tool,
               args: output.args,
-            }),
+            });
+          },
           catch: (error) => error,
         }),
       ),

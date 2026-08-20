@@ -720,7 +720,7 @@ export class LangfuseClient {
     const step =
       this.traceState.activeGenerationStepsByMessageId.get(input.messageID) ??
       (activeStep?.messageID === input.messageID ||
-      !(activeStep?.messageID ?? "")
+      !(activeStep?.messageID != null)
         ? activeStep
         : undefined);
 

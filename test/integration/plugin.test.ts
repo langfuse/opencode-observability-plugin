@@ -276,7 +276,8 @@ const startGeneration = async (input: {
     properties: {
       sessionID: input.sessionID,
       timestamp: input.started,
-      ...(input.assistantMessageID
+      ...(input.assistantMessageID !== undefined &&
+      input.assistantMessageID !== ""
         ? { assistantMessageID: input.assistantMessageID }
         : {}),
       agent: "build",

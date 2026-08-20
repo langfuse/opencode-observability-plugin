@@ -204,8 +204,7 @@ export class LangfuseClient {
     sessionID: string;
     parentSessionID?: string;
   }) {
-    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-    if (input.parentSessionID) {
+    if (input.parentSessionID ?? "") {
       this.traceState.sessionParentIds.set(
         input.sessionID,
         input.parentSessionID,

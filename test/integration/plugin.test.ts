@@ -1399,7 +1399,7 @@ describe.sequential("built plugin", () => {
       output: "07f9a68 Fix tool observation parenting",
     });
     expect(
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- Existing violation; fix separately.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- Existing violation tracked for incremental cleanup.
       getJsonAttribute(secondGeneration!, "langfuse.observation.input"),
     ).toEqual([
       {

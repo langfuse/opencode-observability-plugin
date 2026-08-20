@@ -647,8 +647,7 @@ const main = Effect.gen(function* () {
             tools = yield* Effect.promise(() => pendingTools);
           }
 
-          yield* Effect.sync(() =>
-            // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- Existing violation; fix separately.
+          yield* Effect.sync(() => {
             langfuse.traceUserMessage({
               sessionID: input.sessionID,
               messageID: input.messageID,

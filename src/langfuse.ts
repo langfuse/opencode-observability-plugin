@@ -538,7 +538,7 @@ export class LangfuseClient {
     const generationInput = [
       {
         ...formattedMessage,
-        ...((input.tools?.length ?? 0) ? { tools: input.tools } : {}),
+        ...((input.tools?.length ?? 0) > 0 ? { tools: input.tools } : {}),
       },
     ];
 

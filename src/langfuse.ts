@@ -7,6 +7,12 @@ import type {
   Span,
   SpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
+import {
+  defaultResource,
+  detectResources,
+  envDetector,
+  resourceFromAttributes,
+} from "@opentelemetry/resources";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { Context as EffectContext, Effect } from "effect";
 
@@ -1333,6 +1339,7 @@ export const createLangfuseClient = (input: {
   baseUrl: string;
   environment: string;
   userId?: string;
+  serviceName?: string;
 }) =>
   Effect.gen(function* () {
     const tracerName = "opencode-langfuse-plugin";
@@ -1368,6 +1375,16 @@ export const createLangfuseClient = (input: {
     });
 
     const provider = new NodeTracerProvider({
+      // Honor OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES, which a bare
+      // NodeTracerProvider does not read on its own. Merged-in attributes win,
+      // so a configured serviceName overrides the environment.
+      resource: defaultResource()
+        .merge(detectResources({ detectors: [envDetector] }))
+        .merge(
+          input.serviceName
+            ? resourceFromAttributes({ "service.name": input.serviceName })
+            : null,
+        ),
       spanProcessors: [
         makePluginVersionSpanProcessor(),
         ...(input.userId ? [makeUserIdSpanProcessor(input.userId)] : []),

@@ -37,6 +37,7 @@ interface CapturedRequest {
   headers: IncomingHttpHeaders;
   body: {
     resourceSpans: Array<{
+      resource?: { attributes?: Array<{ key: string; value: OtlpValue }> };
       scopeSpans: Array<{ spans: OtlpSpan[] }>;
     }>;
   };
@@ -169,6 +170,17 @@ const getAttributes = (span: OtlpSpan) =>
       key,
       value.stringValue ?? value.boolValue ?? value.intValue,
     ]),
+  );
+
+const getResourceAttributes = (request: CapturedRequest) =>
+  Object.fromEntries(
+    request.body.resourceSpans.flatMap(
+      (resourceSpan) =>
+        resourceSpan.resource?.attributes?.map(({ key, value }) => [
+          key,
+          value.stringValue ?? value.boolValue ?? value.intValue,
+        ]) ?? [],
+    ),
   );
 
 const getJsonAttribute = (span: OtlpSpan, key: string) => {
@@ -1888,6 +1900,75 @@ describe.sequential("built plugin", () => {
       }
     }
   }, 10_000);
+
+  test("resolves service.name from config, OTEL environment variables, then default", async () => {
+    const originalValues = {
+      OTEL_SERVICE_NAME: process.env.OTEL_SERVICE_NAME,
+      OTEL_RESOURCE_ATTRIBUTES: process.env.OTEL_RESOURCE_ATTRIBUTES,
+      LANGFUSE_SERVICE_NAME: process.env.LANGFUSE_SERVICE_NAME,
+    };
+
+    const recreateHooks = async () => {
+      await disposeHooks();
+      hooksDisposed = false;
+      hooks = await createHooks(collectorBaseUrl);
+    };
+
+    const getSessionResourceAttributes = async (sessionID: string) => {
+      await sendUserMessage({
+        sessionID,
+        messageID: `${sessionID}-user`,
+        text: "Trace for resource attributes",
+        started: startedAt,
+      });
+      const { requests: sessionRequests } = await flushSession(sessionID);
+      expect(sessionRequests.length).toBeGreaterThan(0);
+      return sessionRequests.map(getResourceAttributes);
+    };
+
+    try {
+      delete process.env.OTEL_SERVICE_NAME;
+      delete process.env.OTEL_RESOURCE_ATTRIBUTES;
+      delete process.env.LANGFUSE_SERVICE_NAME;
+      await recreateHooks();
+
+      for (const attributes of await getSessionResourceAttributes(
+        "resource-default-session",
+      )) {
+        expect(attributes["service.name"]).toMatch(/^unknown_service/);
+        expect(attributes["deployment.environment"]).toBeUndefined();
+      }
+
+      process.env.OTEL_SERVICE_NAME = "env-service";
+      process.env.OTEL_RESOURCE_ATTRIBUTES = "deployment.environment=ci";
+      await recreateHooks();
+
+      for (const attributes of await getSessionResourceAttributes(
+        "resource-env-session",
+      )) {
+        expect(attributes["service.name"]).toBe("env-service");
+        expect(attributes["deployment.environment"]).toBe("ci");
+      }
+
+      process.env.LANGFUSE_SERVICE_NAME = "config-service";
+      await recreateHooks();
+
+      for (const attributes of await getSessionResourceAttributes(
+        "resource-config-session",
+      )) {
+        expect(attributes["service.name"]).toBe("config-service");
+        expect(attributes["deployment.environment"]).toBe("ci");
+      }
+    } finally {
+      for (const [name, value] of Object.entries(originalValues)) {
+        if (value === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = value;
+        }
+      }
+    }
+  }, 15_000);
 
   test("can be disposed repeatedly", async () => {
     expect(hooks.dispose).toBeDefined();

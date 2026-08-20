@@ -1194,8 +1194,7 @@ export class LangfuseClient {
     messageID?: string,
   ) {
     const parentSpan =
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-      (messageID
+      ((messageID ?? "")
         ? this.traceState.generationSpansByMessageId.get(messageID)
         : undefined) ??
       this.traceState.activeGenerationSteps.get(sessionID)?.span ??

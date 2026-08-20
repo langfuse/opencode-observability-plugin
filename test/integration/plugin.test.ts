@@ -1637,8 +1637,7 @@ describe.sequential("built plugin", () => {
 
     const spanIds = new Set(spans.map((span) => span.spanId));
     for (const span of spans) {
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-      if (span.parentSpanId) {
+      if (span.parentSpanId ?? "") {
         expect(spanIds.has(span.parentSpanId)).toBe(true);
       }
     }

@@ -279,7 +279,7 @@ export class LangfuseClient {
 
     this.traceState.tracedReasoningIds.add(reasoningTraceKey);
 
-    if (!(input.messageID ?? "")) {
+    if (!(input.messageID != null)) {
       return;
     }
 

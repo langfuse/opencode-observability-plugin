@@ -475,8 +475,7 @@ beforeAll(async () => {
   });
 
   const address = server.address();
-  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-  if (!address || typeof address === "string") {
+  if (address === null || typeof address === "string") {
     throw new Error("Expected the test collector to listen on a TCP port");
   }
 

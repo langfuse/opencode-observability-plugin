@@ -144,6 +144,11 @@ const PluginClientSchema = Schema.declare(
     "tool" in input,
 );
 
+const PluginInputSchema = Schema.declare(
+  (input): input is Parameters<Plugin>[0] =>
+    typeof input === "object" && input !== null && "client" in input,
+);
+
 const packageJson = Schema.decodeUnknownSync(
   Schema.parseJson(Schema.Struct({ version: Schema.String })),
 )(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
@@ -434,8 +439,7 @@ const createHooks = async (baseUrl: string) => {
     },
   });
 
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
-  return plugin({ client } as Parameters<Plugin>[0]);
+  return plugin(Schema.decodeUnknownSync(PluginInputSchema)({ client }));
 };
 
 const disposeHooks = async () => {

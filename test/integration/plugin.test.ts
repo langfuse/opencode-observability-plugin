@@ -504,8 +504,10 @@ afterEach(async () => {
 afterAll(async () => {
   try {
     await new Promise<void>((resolve, reject) =>
-      // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- Existing violation; fix separately.
-      server.close((error) => (error ? reject(error) : resolve())),
+      server.close((error) => {
+        // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- Existing violation tracked for incremental cleanup.
+        error ? reject(error) : resolve();
+      }),
     );
   } finally {
     for (const [name, value] of Object.entries({

@@ -1168,7 +1168,7 @@ export class LangfuseClient {
 
   private getTurnObservation(sessionID: string, messageID: string | undefined) {
     return (
-      ((messageID ?? "")
+      (messageID != null
         ? this.traceState.turnObservationsByMessageId.get(messageID)
         : undefined) ??
       this.traceState.latestTurnObservationsBySession.get(sessionID)

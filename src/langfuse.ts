@@ -366,9 +366,9 @@ export class LangfuseClient {
         "langfuse.observation.metadata",
         JSON.stringify({
           agent: updatedStep.agent,
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Existing violation; fix separately.
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Existing violation tracked for incremental cleanup.
           providerID: updatedStep.model?.providerID,
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Existing violation; fix separately.
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Existing violation tracked for incremental cleanup.
           variant: updatedStep.model?.variant,
           snapshot: updatedStep.snapshot,
         }),

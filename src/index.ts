@@ -690,8 +690,7 @@ const main = Effect.gen(function* () {
           }
 
           if (normalized.isError) {
-            yield* Effect.sync(() =>
-              // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- Existing violation; fix separately.
+            yield* Effect.sync(() => {
               langfuse.traceToolError({
                 sessionID: input.sessionID,
                 callID: input.callID,

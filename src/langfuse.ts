@@ -488,7 +488,7 @@ export class LangfuseClient {
     tools?: ToolDefinition[];
   }) {
     if (
-      (input.messageID ?? "") &&
+      input.messageID != null &&
       this.traceState.tracedMessageIds.has(input.messageID)
     ) {
       return;

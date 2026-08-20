@@ -386,7 +386,11 @@ export class LangfuseClient {
       return;
     }
 
-    if (existingStep && !(existingStep.messageID ?? "") && (messageID ?? "")) {
+    if (
+      existingStep &&
+      !(existingStep.messageID != null) &&
+      messageID != null
+    ) {
       const updatedStep = {
         ...existingStep,
         sessionID: input.sessionID,

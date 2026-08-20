@@ -187,8 +187,7 @@ export class LangfuseClient {
 
     for (const [messageID, observation] of this.traceState
       .turnObservationsByMessageId) {
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-      if (!sessionID || observation.sessionID === sessionID) {
+      if (!(sessionID ?? "") || observation.sessionID === sessionID) {
         this.traceState.turnObservationsByMessageId.delete(messageID);
       }
     }

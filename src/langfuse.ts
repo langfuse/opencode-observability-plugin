@@ -1167,8 +1167,7 @@ export class LangfuseClient {
 
   private getTurnObservation(sessionID: string, messageID: string | undefined) {
     return (
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-      (messageID
+      ((messageID ?? "")
         ? this.traceState.turnObservationsByMessageId.get(messageID)
         : undefined) ??
       this.traceState.latestTurnObservationsBySession.get(sessionID)

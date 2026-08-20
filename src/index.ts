@@ -426,6 +426,7 @@ const flattenMcpContent = (content: readonly unknown[]) => {
 
   for (const part of content) {
     const decoded = Schema.decodeUnknownOption(McpContentSchema)(part);
+    // eslint-disable-next-line curly -- Existing violation, fixed in a follow-up commit.
     if (Option.isNone(decoded)) continue;
 
     if (decoded.value.type === "text") {

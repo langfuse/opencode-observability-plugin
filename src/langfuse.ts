@@ -1101,7 +1101,7 @@ export class LangfuseClient {
     });
     span.recordException({ message: input.error });
     span.end(new Date(input.completed));
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Existing violation; fix separately.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Existing violation tracked for incremental cleanup.
     if (observation) {
       this.rememberToolResult({
         sessionID: observation.sessionID,

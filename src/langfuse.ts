@@ -380,11 +380,7 @@ export class LangfuseClient {
       return;
     }
 
-    if (
-      existingStep &&
-      existingStep.messageID == null &&
-      messageID != null
-    ) {
+    if (existingStep && existingStep.messageID == null && messageID != null) {
       const updatedStep = {
         ...existingStep,
         sessionID: input.sessionID,
@@ -714,8 +710,7 @@ export class LangfuseClient {
     const step =
       this.traceState.activeGenerationStepsByMessageId.get(input.messageID) ??
       (activeStep?.messageID === input.messageID ||
-      // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
-      !(activeStep?.messageID != null)
+      activeStep?.messageID == null
         ? activeStep
         : undefined);
 

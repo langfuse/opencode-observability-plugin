@@ -1284,9 +1284,12 @@ describe("built plugin", { concurrent: false }, () => {
         );
       });
 
-      expect(span).toBeDefined();
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- Existing violation tracked for incremental cleanup.
-      return span!;
+      if (!span) {
+        throw new Error(
+          `Expected generation for ${generation.assistantMessageID}`,
+        );
+      }
+      return span;
     });
     const toolSpans = generations.map((generation) =>
       getSpan(spans, generation.tool),

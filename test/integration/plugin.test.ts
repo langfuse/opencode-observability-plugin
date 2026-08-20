@@ -668,13 +668,15 @@ describe("built plugin", { concurrent: false }, () => {
       (span) =>
         span.name === "opencode.turn" || span.name === "opencode.message.user",
     )) {
-      expect(getJsonAttribute(span, "langfuse.observation.input")).toEqual([
-        {
-          role: "user",
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Existing violation tracked for incremental cleanup.
-          content: expect.any(Array),
-        },
-      ]);
+      const input = Schema.decodeUnknownSync(
+        Schema.Array(
+          Schema.Struct({
+            role: Schema.Literal("user"),
+            content: Schema.Array(Schema.Unknown),
+          }),
+        ),
+      )(getJsonAttribute(span, "langfuse.observation.input"));
+      expect(input).toHaveLength(1);
     }
     for (const turn of spans.filter((span) => span.name === "opencode.turn")) {
       expect(getAttributes(turn)).toMatchObject({

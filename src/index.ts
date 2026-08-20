@@ -158,8 +158,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
       langfuse.endActiveGenerationSteps(sessionID);
       langfuse.endActiveTurnObservations(sessionID);
 
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-      if (sessionID) {
+      if (Boolean(sessionID)) {
         langfuse.clearSessionTraceState(sessionID);
       } else {
         langfuse.clearTraceState();

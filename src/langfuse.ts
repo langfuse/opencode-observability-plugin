@@ -943,8 +943,7 @@ export class LangfuseClient {
 
     turn.span.end();
 
-    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-    if (turn.messageID) {
+    if (turn.messageID ?? "") {
       this.traceState.turnObservationsByMessageId.delete(turn.messageID);
     }
 

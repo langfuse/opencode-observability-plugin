@@ -152,16 +152,21 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
   Effect.gen(function* () {
     const langfuse = yield* LangfuseClientService;
 
-    const finalizeSessionTracing = () => {
-      langfuse.endActiveToolObservations();
-      langfuse.endActiveGenerationSteps();
-      langfuse.endActiveTurnObservations();
-      langfuse.clearTraceState();
+    const finalizeSessionTracing = (sessionID?: string) => {
+      langfuse.endActiveToolObservations(sessionID);
+      langfuse.endActiveGenerationSteps(sessionID);
+      langfuse.endActiveTurnObservations(sessionID);
+
+      if (sessionID) {
+        langfuse.clearSessionTraceState(sessionID);
+      } else {
+        langfuse.clearTraceState();
+      }
     };
 
     if (event.type === "session.idle") {
       yield* log("info", "Flushing spans");
-      finalizeSessionTracing();
+      finalizeSessionTracing(event.properties.sessionID);
 
       yield* langfuse.forceFlush;
     }
@@ -175,6 +180,19 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
           catch: (error) => error,
         });
       }
+    }
+
+    if (event.type === "session.created" || event.type === "session.updated") {
+      langfuse.rememberSessionParent({
+        sessionID: event.properties.info.id,
+        parentSessionID: event.properties.info.parentID,
+      });
+    }
+
+    if (event.type === "session.deleted") {
+      langfuse.rememberSessionParent({
+        sessionID: event.properties.info.id,
+      });
     }
 
     if (event.type === "session.error" && event.properties.sessionID) {

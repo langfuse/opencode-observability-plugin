@@ -205,6 +205,20 @@ const getSpan = (spans: OtlpSpan[], name: string) => {
   return span;
 };
 
+const getSessionSpan = (spans: OtlpSpan[], name: string, sessionID: string) => {
+  const span = spans.find(
+    (candidate) =>
+      candidate.name === name &&
+      getAttributes(candidate)["session.id"] === sessionID,
+  );
+
+  if (!span) {
+    throw new Error(`Expected a ${name} span for session ${sessionID}`);
+  }
+
+  return span;
+};
+
 const emitEvent = async (event: TestPluginEvent) => {
   // These events are emitted by current OpenCode versions but are not yet part of
   // the PluginEvent union exported by our pinned @opencode-ai/plugin version.
@@ -909,6 +923,102 @@ describe.sequential("built plugin", () => {
     expect(
       spans.filter((span) => span.name === "opencode.generation.reasoning"),
     ).toHaveLength(0);
+  });
+
+  test("links child agent sessions to the parent trace", async () => {
+    const parentSessionID = "parent-agent-session";
+    const childSessionID = "child-agent-session";
+    const parentUserMessageID = "parent-agent-user";
+    const parentAssistantMessageID = "parent-agent-assistant";
+    const childUserMessageID = "child-agent-user";
+    const childAssistantMessageID = "child-agent-assistant";
+    const started = startedAt;
+
+    await sendUserMessage({
+      sessionID: parentSessionID,
+      messageID: parentUserMessageID,
+      text: "Delegate this investigation",
+      started,
+    });
+    await startGeneration({
+      id: "parent-agent-step",
+      sessionID: parentSessionID,
+      started: started + 100,
+    });
+    await emitEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: childSessionID,
+          projectID: "test-project",
+          directory: "/test",
+          parentID: parentSessionID,
+          title: "Child investigation",
+          version: "1.15.5",
+          time: { created: started + 150, updated: started + 150 },
+        },
+      },
+    });
+
+    await sendUserMessage({
+      sessionID: childSessionID,
+      messageID: childUserMessageID,
+      text: "Inspect the child scope",
+      started: started + 200,
+    });
+    await startGeneration({
+      id: "child-agent-step",
+      sessionID: childSessionID,
+      started: started + 300,
+    });
+    await completeGeneration({
+      sessionID: childSessionID,
+      userMessageID: childUserMessageID,
+      assistantMessageID: childAssistantMessageID,
+      started: started + 300,
+      completed: started + 600,
+      text: "Child result",
+    });
+    const childFlush = await flushSession(childSessionID);
+
+    await completeGeneration({
+      sessionID: parentSessionID,
+      userMessageID: parentUserMessageID,
+      assistantMessageID: parentAssistantMessageID,
+      started: started + 100,
+      completed: started + 900,
+      text: "Parent result",
+    });
+    const parentFlush = await flushSession(parentSessionID);
+    const spans = [...childFlush.spans, ...parentFlush.spans];
+
+    const parentGeneration = getSessionSpan(
+      spans,
+      "opencode.generation",
+      parentSessionID,
+    );
+    const childTurn = getSessionSpan(spans, "opencode.turn", childSessionID);
+    const childGeneration = getSessionSpan(
+      spans,
+      "opencode.generation",
+      childSessionID,
+    );
+
+    expect(childTurn.traceId).toBe(parentGeneration.traceId);
+    expect(childTurn.parentSpanId).toBe(parentGeneration.spanId);
+    expect(getAttributes(childTurn)).toMatchObject({
+      "langfuse.internal.is_app_root": false,
+    });
+    expect(
+      getJsonAttribute(childTurn, "langfuse.observation.metadata"),
+    ).toMatchObject({
+      parentSessionID,
+    });
+    expect(childGeneration.traceId).toBe(parentGeneration.traceId);
+    expect(childGeneration.parentSpanId).toBe(childTurn.spanId);
+    expect(
+      getJsonAttribute(parentGeneration, "langfuse.observation.output"),
+    ).toEqual([{ role: "assistant", content: "Parent result" }]);
   });
 
   test("parents each tool to the generation that requested it when lifecycle events arrive out of order", async () => {

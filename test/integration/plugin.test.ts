@@ -2060,8 +2060,7 @@ describe.sequential("built plugin", () => {
       unavailableServer.listen(0, "127.0.0.1", resolve);
     });
     const address = unavailableServer.address();
-    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-    if (!address || typeof address === "string") {
+    if (address === null || typeof address === "string") {
       throw new Error("Expected the unavailable collector to use a TCP port");
     }
     hooksDisposed = false;

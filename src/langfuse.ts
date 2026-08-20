@@ -1178,7 +1178,7 @@ export class LangfuseClient {
   private getSessionParentSpan(sessionID: string) {
     const parentSessionID = this.traceState.sessionParentIds.get(sessionID);
 
-    if (!(parentSessionID ?? "")) {
+    if (!(parentSessionID != null)) {
       return undefined;
     }
 

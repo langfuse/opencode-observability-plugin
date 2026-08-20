@@ -153,8 +153,7 @@ export class LangfuseClient {
 
     for (const [activeSessionID, step] of this.traceState
       .activeGenerationSteps) {
-      // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
-      if (!(sessionID != null) || step.sessionID === sessionID) {
+      if (sessionID == null || step.sessionID === sessionID) {
         this.traceState.activeGenerationSteps.delete(activeSessionID);
         this.traceState.generationParentSpans.delete(activeSessionID);
       }

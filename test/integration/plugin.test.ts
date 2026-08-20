@@ -865,13 +865,10 @@ describe.sequential("built plugin", () => {
         tool: "mcp_failing_tool",
         args: { query: "fail" },
       },
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
-      {
+      Schema.decodeUnknownSync(McpToolOutputSchema)({
         content: [{ type: "text", text: "MCP tool failed" }],
         isError: true,
-      } as unknown as Parameters<
-        NonNullable<PluginHooks["tool.execute.after"]>
-      >[1],
+      }),
     );
     await emitEvent({
       type: "message.part.updated",

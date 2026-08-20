@@ -187,14 +187,14 @@ export class LangfuseClient {
 
     for (const [messageID, observation] of this.traceState
       .turnObservationsByMessageId) {
-      if (!(sessionID ?? "") || observation.sessionID === sessionID) {
+      if (!(sessionID != null) || observation.sessionID === sessionID) {
         this.traceState.turnObservationsByMessageId.delete(messageID);
       }
     }
 
     for (const [activeSessionID, observation] of this.traceState
       .latestTurnObservationsBySession) {
-      if (!(sessionID ?? "") || observation.sessionID === sessionID) {
+      if (!(sessionID != null) || observation.sessionID === sessionID) {
         this.traceState.latestTurnObservationsBySession.delete(activeSessionID);
       }
     }

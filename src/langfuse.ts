@@ -1517,13 +1517,13 @@ export const createLangfuseClient = (input: {
       resource: defaultResource()
         .merge(detectResources({ detectors: [envDetector] }))
         .merge(
-          (input.serviceName ?? "")
+          input.serviceName != null
             ? resourceFromAttributes({ "service.name": input.serviceName })
             : null,
         ),
       spanProcessors: [
         makePluginVersionSpanProcessor(),
-        ...((input.userId ?? "")
+        ...(input.userId != null
           ? [makeUserIdSpanProcessor(input.userId)]
           : []),
         processor,

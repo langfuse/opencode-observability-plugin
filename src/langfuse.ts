@@ -157,8 +157,7 @@ export class LangfuseClient {
 
     for (const [activeSessionID, step] of this.traceState
       .activeGenerationSteps) {
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-      if (!sessionID || step.sessionID === sessionID) {
+      if (!(sessionID ?? "") || step.sessionID === sessionID) {
         this.traceState.activeGenerationSteps.delete(activeSessionID);
         this.traceState.generationParentSpans.delete(activeSessionID);
       }

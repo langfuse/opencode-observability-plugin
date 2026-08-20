@@ -481,12 +481,7 @@ const createShutdownOnce = (langfuse: LangfuseClient) => {
   let shutdownPromise: Promise<void> | undefined;
 
   return () => {
-    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Existing violation tracked for incremental cleanup.
-    if (!shutdownPromise) {
-      shutdownPromise = Effect.runPromise(langfuse.shutdown);
-    }
-
-    return shutdownPromise;
+    return (shutdownPromise ??= Effect.runPromise(langfuse.shutdown));
   };
 };
 

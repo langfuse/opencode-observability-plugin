@@ -872,7 +872,7 @@ export class LangfuseClient {
       step.span.recordException(input.error);
       step.span.end(new Date(input.completed));
       const messageID = input.assistantMessageID ?? step.messageID;
-      if (messageID ?? "") {
+      if (messageID != null) {
         this.traceState.activeGenerationStepsByMessageId.delete(messageID);
       }
 

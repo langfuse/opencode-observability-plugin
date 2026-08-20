@@ -1436,11 +1436,11 @@ const makeUserIdSpanProcessor = (userId: string) =>
 
 const makePluginVersionSpanProcessor = () =>
   ({
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- Existing violation; fix separately.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- Existing violation tracked for incremental cleanup.
     onStart: (span: Span, _parentContext: unknown) => {
       span.setAttribute("langfuse.plugin.version", PLUGIN_VERSION);
     },
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function -- Existing violation; fix separately.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function -- Existing violation tracked for incremental cleanup.
     onEnd: (_span: ReadableSpan) => {},
     shutdown: () => Promise.resolve(),
     forceFlush: () => Promise.resolve(),

@@ -348,19 +348,31 @@ const formatHookError = (error: unknown) => {
   }
 };
 
-const flattenMcpContent = (content: unknown[]) =>
-  content
-    .map((part) => {
-      if (typeof part === "string") return part;
-      if (part && typeof part === "object") {
-        const record = part as Record<string, unknown>;
-        if (typeof record.text === "string") return record.text;
-        if (typeof record.type === "string") return `[${record.type}]`;
+const flattenMcpContent = (content: unknown[]) => {
+  const textParts: string[] = [];
+
+  for (const part of content) {
+    if (!part || typeof part !== "object") continue;
+
+    const record = part as Record<string, unknown>;
+    if (record.type === "text" && typeof record.text === "string") {
+      textParts.push(record.text);
+      continue;
+    }
+
+    if (record.type === "resource") {
+      const resource =
+        record.resource && typeof record.resource === "object"
+          ? (record.resource as Record<string, unknown>)
+          : undefined;
+      if (typeof resource?.text === "string") {
+        textParts.push(resource.text);
       }
-      return "";
-    })
-    .filter((text) => text.length > 0)
-    .join("\n");
+    }
+  }
+
+  return textParts.join("\n\n");
+};
 
 const normalizeToolResult = (tool: string, output: unknown) => {
   const record =

@@ -742,7 +742,17 @@ describe.sequential("built plugin", () => {
         args: { query: "test" },
       },
       {
-        content: [{ type: "text", text: "MCP tool result" }],
+        content: [
+          { type: "text", text: "MCP tool result" },
+          {
+            type: "resource",
+            resource: {
+              uri: "foo://bar",
+              text: "MCP resource contents",
+            },
+          },
+          { type: "image", mimeType: "image/png", data: "aW1hZ2U=" },
+        ],
       } as unknown as Parameters<
         NonNullable<PluginHooks["tool.execute.after"]>
       >[1],
@@ -887,7 +897,7 @@ describe.sequential("built plugin", () => {
     const mcpTool = getSpan(spans, "mcp_test_tool");
     expect(getJsonAttribute(mcpTool, "langfuse.observation.output")).toEqual({
       title: "mcp_test_tool",
-      output: "MCP tool result",
+      output: "MCP tool result\n\nMCP resource contents",
     });
     expect(tool.traceId).toBe(generation.traceId);
     expect(tool.parentSpanId).toBe(generation.spanId);

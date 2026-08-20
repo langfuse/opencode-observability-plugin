@@ -178,8 +178,7 @@ export class LangfuseClient {
     ]);
 
     for (const observation of observations) {
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-      if (sessionID && observation.sessionID !== sessionID) {
+      if ((sessionID ?? "") && observation.sessionID !== sessionID) {
         continue;
       }
 

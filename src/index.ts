@@ -201,7 +201,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
       });
     }
 
-    if (event.type === "session.error" && (event.properties.sessionID ?? "")) {
+    if (event.type === "session.error" && event.properties.sessionID != null) {
       langfuse.traceSessionError({
         sessionID: event.properties.sessionID,
         error: event.properties.error,

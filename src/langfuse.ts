@@ -1258,7 +1258,7 @@ export class LangfuseClient {
     this.traceState.generationInputsBySession.delete(sessionID);
     this.traceState.toolResultSourceMessageIdsBySession.delete(sessionID);
 
-    if (!(sourceMessageID ?? "")) {
+    if (!(sourceMessageID != null)) {
       return input;
     }
 

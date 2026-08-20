@@ -1528,8 +1528,9 @@ export const createLangfuseClient = (input: {
     });
     let isShutdown = false;
 
-    // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- Existing violation; fix separately.
-    yield* Effect.sync(() => provider.register());
+    yield* Effect.sync(() => {
+      provider.register();
+    });
 
     return new LangfuseClient({
       baseUrl: input.baseUrl,

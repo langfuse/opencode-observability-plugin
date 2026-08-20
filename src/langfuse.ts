@@ -1524,8 +1524,9 @@ export const createLangfuseClient = (input: {
         ),
       spanProcessors: [
         makePluginVersionSpanProcessor(),
-        // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-        ...(input.userId ? [makeUserIdSpanProcessor(input.userId)] : []),
+        ...((input.userId ?? "")
+          ? [makeUserIdSpanProcessor(input.userId)]
+          : []),
         processor,
         makeAppRootSpanProcessor(traceState.tracerName),
       ],

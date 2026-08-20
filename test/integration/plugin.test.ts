@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import type { IncomingHttpHeaders, Server } from "node:http";
 
 import { trace } from "@opentelemetry/api";
+import { Schema } from "effect";
 import {
   afterAll,
   afterEach,
@@ -127,14 +128,9 @@ type TestPluginEvent =
       };
     };
 
-// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
-const packageJson = JSON.parse(
-  readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
-) as { version?: unknown };
-
-if (typeof packageJson.version !== "string") {
-  throw new Error("Expected package.json to contain a version");
-}
+const packageJson = Schema.decodeUnknownSync(
+  Schema.parseJson(Schema.Struct({ version: Schema.String })),
+)(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
 
 const packageVersion = packageJson.version;
 

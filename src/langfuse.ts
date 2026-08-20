@@ -547,7 +547,7 @@ export class LangfuseClient {
       generationInput,
     );
 
-    if (input.messageID ?? "") {
+    if (input.messageID != null) {
       this.traceState.tracedMessageIds.add(input.messageID);
     }
 

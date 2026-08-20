@@ -464,8 +464,7 @@ export class LangfuseClient {
         span,
         snapshot: input.snapshot,
       });
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-      if (messageID) {
+      if (messageID ?? "") {
         const step = this.traceState.activeGenerationSteps.get(input.sessionID);
         if (step) {
           this.traceState.activeGenerationStepsByMessageId.set(messageID, step);

@@ -10,6 +10,26 @@ export default [
     files: ["**/*.{js,mjs,cjs,ts}"],
     rules: {
       curly: ["error", "all"],
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "CallExpression[callee.name='Boolean']",
+          message:
+            "Avoid truthiness coercion. Use an explicit condition or comparison instead.",
+        },
+        {
+          selector:
+            "UnaryExpression[operator='!'] > BinaryExpression[operator='!=']",
+          message:
+            "Avoid negating comparisons. Use the inverse operator directly.",
+        },
+        {
+          selector:
+            "UnaryExpression[operator='!'] > BinaryExpression[operator='!==']",
+          message:
+            "Avoid negating comparisons. Use the inverse operator directly.",
+        },
+      ],
     },
   },
   ...[

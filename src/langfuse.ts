@@ -106,6 +106,7 @@ export class LangfuseClient {
   endActiveToolObservations(sessionID?: string, error?: SessionErrorInfo) {
     for (const [callID, observation] of this.traceState
       .activeToolObservations) {
+      // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
       if (Boolean(sessionID) && observation.sessionID !== sessionID) {
         continue;
       }
@@ -153,6 +154,7 @@ export class LangfuseClient {
 
     for (const [activeSessionID, step] of this.traceState
       .activeGenerationSteps) {
+      // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
       if (!(sessionID != null) || step.sessionID === sessionID) {
         this.traceState.activeGenerationSteps.delete(activeSessionID);
         this.traceState.generationParentSpans.delete(activeSessionID);
@@ -161,6 +163,7 @@ export class LangfuseClient {
 
     for (const [messageID, step] of this.traceState
       .activeGenerationStepsByMessageId) {
+      // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
       if (!(sessionID != null) || step.sessionID === sessionID) {
         this.traceState.activeGenerationStepsByMessageId.delete(messageID);
       }
@@ -183,6 +186,7 @@ export class LangfuseClient {
 
     for (const [messageID, observation] of this.traceState
       .turnObservationsByMessageId) {
+      // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
       if (!(sessionID != null) || observation.sessionID === sessionID) {
         this.traceState.turnObservationsByMessageId.delete(messageID);
       }
@@ -190,6 +194,7 @@ export class LangfuseClient {
 
     for (const [activeSessionID, observation] of this.traceState
       .latestTurnObservationsBySession) {
+      // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
       if (!(sessionID != null) || observation.sessionID === sessionID) {
         this.traceState.latestTurnObservationsBySession.delete(activeSessionID);
       }
@@ -275,6 +280,7 @@ export class LangfuseClient {
 
     this.traceState.tracedReasoningIds.add(reasoningTraceKey);
 
+    // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
     if (!(input.messageID != null)) {
       return;
     }
@@ -382,6 +388,7 @@ export class LangfuseClient {
 
     if (
       existingStep &&
+      // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
       !(existingStep.messageID != null) &&
       messageID != null
     ) {
@@ -423,6 +430,7 @@ export class LangfuseClient {
       return;
     }
 
+    // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
     if (!(messageID != null) && existingStep) {
       return;
     }
@@ -714,6 +722,7 @@ export class LangfuseClient {
     const step =
       this.traceState.activeGenerationStepsByMessageId.get(input.messageID) ??
       (activeStep?.messageID === input.messageID ||
+      // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
       !(activeStep?.messageID != null)
         ? activeStep
         : undefined);
@@ -840,6 +849,7 @@ export class LangfuseClient {
             input.assistantMessageID,
           ) ??
           (activeStep?.messageID === input.assistantMessageID ||
+          // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
           !(activeStep?.messageID != null)
             ? activeStep
             : undefined))
@@ -1172,6 +1182,7 @@ export class LangfuseClient {
   private getSessionParentSpan(sessionID: string) {
     const parentSessionID = this.traceState.sessionParentIds.get(sessionID);
 
+    // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
     if (!(parentSessionID != null)) {
       return undefined;
     }
@@ -1207,6 +1218,7 @@ export class LangfuseClient {
     const content = parts
       .filter(
         (part): part is Extract<MessagePart, { type: "text" }> =>
+          // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
           part.type === "text" && Boolean(part.text),
       )
       .map((part) => part.text)
@@ -1214,6 +1226,7 @@ export class LangfuseClient {
     const thinking = parts
       .filter(
         (part): part is Extract<MessagePart, { type: "reasoning" }> =>
+          // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
           part.type === "reasoning" && Boolean(part.text),
       )
       .map((part) => ({ type: "thinking" as const, content: part.text }));
@@ -1252,6 +1265,7 @@ export class LangfuseClient {
     this.traceState.generationInputsBySession.delete(sessionID);
     this.traceState.toolResultSourceMessageIdsBySession.delete(sessionID);
 
+    // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
     if (!(sourceMessageID != null)) {
       return input;
     }

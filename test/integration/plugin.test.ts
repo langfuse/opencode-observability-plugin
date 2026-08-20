@@ -2084,13 +2084,12 @@ describe.sequential("built plugin", () => {
     } finally {
       try {
         await disposeHooks();
-        await new Promise<void>((resolve, reject) =>
-          // eslint-disable-next-line @typescript-eslint/strict-void-return -- Existing violation; fix separately.
+        await new Promise<void>((resolve, reject) => {
           unavailableServer.close((error) => {
             // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- Existing violation tracked for incremental cleanup.
             error ? reject(error) : resolve();
-          }),
-        );
+          });
+        });
       } finally {
         if (originalExporterTimeout === undefined) {
           delete process.env.OTEL_EXPORTER_OTLP_TRACES_TIMEOUT;

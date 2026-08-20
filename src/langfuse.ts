@@ -623,7 +623,7 @@ export class LangfuseClient {
       });
     };
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- Existing violation; fix separately.
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- Existing violation tracked for incremental cleanup.
     parentSpan
       ? context.with(trace.setSpan(context.active(), parentSpan), startTurn)
       : startTurn();

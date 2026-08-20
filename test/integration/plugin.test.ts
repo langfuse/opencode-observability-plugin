@@ -338,7 +338,7 @@ const completeGeneration = async (input: {
   completed: number;
   text?: string;
 }) => {
-  if (input.text ?? "") {
+  if (input.text !== undefined && input.text !== "") {
     await emitEvent({
       type: "message.part.updated",
       properties: {

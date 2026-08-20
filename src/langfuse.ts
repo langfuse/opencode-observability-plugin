@@ -495,7 +495,7 @@ export class LangfuseClient {
       role: "user" as const,
       content: input.parts.map((part) => {
         if (part.type === "text") {
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Existing violation; fix separately.
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Existing violation tracked for incremental cleanup.
           return { type: part.type, text: part.text ?? "" };
         }
 

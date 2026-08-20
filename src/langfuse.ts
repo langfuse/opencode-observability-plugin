@@ -1248,8 +1248,7 @@ export class LangfuseClient {
     this.traceState.generationInputsBySession.delete(sessionID);
     this.traceState.toolResultSourceMessageIdsBySession.delete(sessionID);
 
-    // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
-    if (!(sourceMessageID != null)) {
+    if (sourceMessageID == null) {
       return input;
     }
 

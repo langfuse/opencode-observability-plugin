@@ -714,7 +714,8 @@ const main = Effect.gen(function* () {
                 args: input.args,
                 title: normalized.title,
                 output: normalized.output,
-              }),
+              });
+            },
             catch: (error) => error,
           });
         }),

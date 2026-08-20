@@ -655,8 +655,8 @@ const main = Effect.gen(function* () {
               model: input.model,
               parts: output.parts,
               tools,
-            }),
-          );
+            });
+          });
         }),
       ),
 

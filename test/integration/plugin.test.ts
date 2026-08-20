@@ -465,8 +465,9 @@ beforeAll(async () => {
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- Existing violation; fix separately.
-    server.listen(0, "127.0.0.1", () => resolve());
+    server.listen(0, "127.0.0.1", () => {
+      resolve();
+    });
   });
 
   const address = server.address();

@@ -534,8 +534,7 @@ export class LangfuseClient {
     const generationInput = [
       {
         ...formattedMessage,
-        // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-        ...(input.tools?.length ? { tools: input.tools } : {}),
+        ...((input.tools?.length ?? 0) ? { tools: input.tools } : {}),
       },
     ];
 

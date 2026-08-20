@@ -755,6 +755,53 @@ describe.sequential("built plugin", () => {
       },
       { title: "README.md", output: "# Project", metadata: {} },
     );
+    const mcpCallID = "nested-observations-mcp-call";
+    await hooks["tool.execute.before"]?.(
+      { sessionID, callID: mcpCallID, tool: "mcp_test_tool" },
+      { args: { query: "test" } },
+    );
+    await hooks["tool.execute.after"]?.(
+      {
+        sessionID,
+        callID: mcpCallID,
+        tool: "mcp_test_tool",
+        args: { query: "test" },
+      },
+      {
+        content: [
+          { type: "text", text: "MCP tool result" },
+          {
+            type: "resource",
+            resource: {
+              uri: "foo://bar",
+              text: "MCP resource contents",
+            },
+          },
+          { type: "image", mimeType: "image/png", data: "aW1hZ2U=" },
+        ],
+      } as unknown as Parameters<
+        NonNullable<PluginHooks["tool.execute.after"]>
+      >[1],
+    );
+    const failedMcpCallID = "nested-observations-failed-mcp-call";
+    await hooks["tool.execute.before"]?.(
+      { sessionID, callID: failedMcpCallID, tool: "mcp_failing_tool" },
+      { args: { query: "fail" } },
+    );
+    await hooks["tool.execute.after"]?.(
+      {
+        sessionID,
+        callID: failedMcpCallID,
+        tool: "mcp_failing_tool",
+        args: { query: "fail" },
+      },
+      {
+        content: [{ type: "text", text: "MCP tool failed" }],
+        isError: true,
+      } as unknown as Parameters<
+        NonNullable<PluginHooks["tool.execute.after"]>
+      >[1],
+    );
     await emitEvent({
       type: "message.part.updated",
       properties: {
@@ -842,6 +889,8 @@ describe.sequential("built plugin", () => {
         "opencode.message.user",
         "opencode.generation",
         "read",
+        "mcp_test_tool",
+        "mcp_failing_tool",
         "webfetch",
         "opencode.generation.retry",
         "opencode.generation.compaction",
@@ -891,6 +940,19 @@ describe.sequential("built plugin", () => {
       title: "README.md",
       output: "# Project",
     });
+    const mcpTool = getSpan(spans, "mcp_test_tool");
+    expect(getJsonAttribute(mcpTool, "langfuse.observation.output")).toEqual({
+      title: "mcp_test_tool",
+      output: "MCP tool result\n\nMCP resource contents",
+    });
+    const failedMcpTool = getSpan(spans, "mcp_failing_tool");
+    expect(failedMcpTool.status).toEqual({
+      code: 2,
+      message: "MCP tool failed",
+    });
+    expect(
+      getJsonAttribute(failedMcpTool, "langfuse.observation.output"),
+    ).toEqual({ error: "MCP tool failed" });
     expect(tool.traceId).toBe(generation.traceId);
     expect(tool.parentSpanId).toBe(generation.spanId);
 

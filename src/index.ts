@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { Hooks, Plugin } from "@opencode-ai/plugin";
-import { Data, Effect, Layer, Schema } from "effect";
+import { Data, Effect, Layer, Option, Schema } from "effect";
 
 import {
   LangfuseClientService,
@@ -368,6 +368,108 @@ const formatHookError = (error: unknown) => {
   }
 };
 
+// https://github.com/anomalyco/opencode/blob/v1.15.13/packages/opencode/src/tool/tool.ts#L46-L52
+const NativeToolResultSchema = Schema.Struct({
+  title: Schema.String,
+  metadata: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  output: Schema.String,
+  attachments: Schema.optional(Schema.Array(Schema.Unknown)),
+});
+
+// OpenCode returns CallToolResultSchema from its MCP adapter and passes that raw
+// value to the hook before normalization:
+// https://github.com/anomalyco/opencode/blob/v1.15.13/packages/opencode/src/mcp/index.ts#L158-L187
+const McpToolResultSchema = Schema.Struct({
+  content: Schema.Array(Schema.Unknown),
+  structuredContent: Schema.optional(
+    Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  ),
+  isError: Schema.optional(Schema.Boolean),
+  _meta: Schema.optional(
+    Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  ),
+});
+
+const McpResourceContentsSchema = Schema.Union(
+  Schema.Struct({
+    uri: Schema.String,
+    mimeType: Schema.optional(Schema.String),
+    text: Schema.String,
+  }),
+  Schema.Struct({
+    uri: Schema.String,
+    mimeType: Schema.optional(Schema.String),
+    blob: Schema.String,
+  }),
+);
+
+// These are the MCP content variants OpenCode handles when creating its native
+// output: https://github.com/anomalyco/opencode/blob/v1.15.13/packages/opencode/src/session/tools.ts#L153-L176
+const McpContentSchema = Schema.Union(
+  Schema.Struct({
+    type: Schema.Literal("text"),
+    text: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("image"),
+    data: Schema.String,
+    mimeType: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("resource"),
+    resource: McpResourceContentsSchema,
+  }),
+);
+
+const flattenMcpContent = (content: readonly unknown[]) => {
+  const textParts: string[] = [];
+
+  for (const part of content) {
+    const decoded = Schema.decodeUnknownOption(McpContentSchema)(part);
+    if (Option.isNone(decoded)) continue;
+
+    if (decoded.value.type === "text") {
+      textParts.push(decoded.value.text);
+      continue;
+    }
+
+    if (decoded.value.type === "resource" && "text" in decoded.value.resource) {
+      textParts.push(decoded.value.resource.text);
+    }
+  }
+
+  return textParts.join("\n\n");
+};
+
+const normalizeToolResult = (tool: string, output: unknown) => {
+  const nativeResult = Schema.decodeUnknownOption(NativeToolResultSchema)(
+    output,
+  );
+  if (Option.isSome(nativeResult)) {
+    return {
+      title: nativeResult.value.title,
+      output: nativeResult.value.output,
+      isError: false,
+      unexpected: false,
+    };
+  }
+
+  const mcpResult = Schema.decodeUnknownOption(McpToolResultSchema)(output);
+  if (Option.isSome(mcpResult)) {
+    return {
+      title: tool,
+      output: flattenMcpContent(mcpResult.value.content),
+      isError: mcpResult.value.isError === true,
+      unexpected: false,
+    };
+  }
+  if (output === undefined || output === null) {
+    return { title: tool, output: "", isError: false, unexpected: false };
+  }
+
+  return { title: tool, output: "", isError: false, unexpected: true };
+};
+
 const createShutdownOnce = (langfuse: LangfuseClient) => {
   let shutdownPromise: Promise<void> | undefined;
 
@@ -573,17 +675,44 @@ const main = Effect.gen(function* () {
     "tool.execute.after": (input, output) =>
       runHook(
         "tool.execute.after",
-        Effect.try({
-          try: () =>
-            langfuse.traceToolEnd({
-              sessionID: input.sessionID,
-              callID: input.callID,
-              tool: input.tool,
-              args: input.args,
-              title: output.title,
-              output: output.output,
-            }),
-          catch: (error) => error,
+        Effect.gen(function* () {
+          const normalized = normalizeToolResult(input.tool, output);
+
+          if (normalized.unexpected) {
+            yield* log(
+              "warn",
+              `Tool "${input.tool}" returned an unrecognized result shape; recording empty output`,
+            );
+          }
+
+          if (normalized.isError) {
+            yield* Effect.sync(() =>
+              langfuse.traceToolError({
+                sessionID: input.sessionID,
+                callID: input.callID,
+                tool: input.tool,
+                args: input.args,
+                error:
+                  normalized.output ||
+                  `MCP tool "${input.tool}" returned an error`,
+                completed: Date.now(),
+              }),
+            );
+            return;
+          }
+
+          yield* Effect.try({
+            try: () =>
+              langfuse.traceToolEnd({
+                sessionID: input.sessionID,
+                callID: input.callID,
+                tool: input.tool,
+                args: input.args,
+                title: normalized.title,
+                output: normalized.output,
+              }),
+            catch: (error) => error,
+          });
         }),
       ),
   };

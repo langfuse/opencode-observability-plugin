@@ -275,8 +275,7 @@ export class LangfuseClient {
 
     this.traceState.tracedReasoningIds.add(reasoningTraceKey);
 
-    // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
-    if (!(input.messageID != null)) {
+    if (input.messageID == null) {
       return;
     }
 

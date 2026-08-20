@@ -110,8 +110,7 @@ export class LangfuseClient {
   endActiveToolObservations(sessionID?: string, error?: SessionErrorInfo) {
     for (const [callID, observation] of this.traceState
       .activeToolObservations) {
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-      if (sessionID && observation.sessionID !== sessionID) {
+      if (Boolean(sessionID) && observation.sessionID !== sessionID) {
         continue;
       }
 

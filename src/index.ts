@@ -134,7 +134,7 @@ const loadLangfuseCredentials = Effect.gen(function* () {
   );
 
   const credentials = yield* Effect.tryPromise({
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- Existing violation; fix separately.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- Existing violation tracked for incremental cleanup.
     try: async () => JSON.parse(await readFile(configPath, "utf8")),
     catch: () => new MissingLangfuseCredentials(),
   }).pipe(

@@ -333,7 +333,7 @@ export class LangfuseClient {
   }) {
     const messageID = input.assistantMessageID;
     const existingMessageStep =
-      (messageID ?? "")
+      messageID != null
         ? this.traceState.activeGenerationStepsByMessageId.get(messageID)
         : undefined;
     const existingStep = this.traceState.activeGenerationSteps.get(

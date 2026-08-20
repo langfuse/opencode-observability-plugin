@@ -50,6 +50,8 @@ export class LangfuseClient {
     this.traceState.turnObservationsByMessageId.clear();
     this.traceState.latestTurnObservationsBySession.clear();
     this.traceState.finalizedToolCallIds.clear();
+    // messageHistoriesBySession is intentionally kept: it must survive the
+    // session.idle flush between turns so later generations keep prior turns.
   }
 
   endActiveToolObservations(sessionID?: string, error?: SessionErrorInfo) {
@@ -343,7 +345,7 @@ export class LangfuseClient {
       return;
     }
 
-    const generationInput = this.consumeGenerationInput(input.sessionID);
+    const generationInput = this.collectGenerationInput(input.sessionID);
 
     this.withTurnParent(input.sessionID, undefined, () => {
       const span = this.traceState.tracer.startSpan("opencode.generation", {
@@ -656,6 +658,10 @@ export class LangfuseClient {
         this.traceState.activeGenerationSteps.delete(input.sessionID);
       }
 
+      if (input.mode !== "compaction") {
+        this.appendAssistantMessageToHistory(input.sessionID, input.messageID);
+      }
+
       return;
     }
 
@@ -663,7 +669,11 @@ export class LangfuseClient {
       return;
     }
 
-    const generationInput = this.consumeGenerationInput(input.sessionID);
+    const generationInput = this.collectGenerationInput(input.sessionID);
+
+    if (input.mode !== "compaction") {
+      this.appendAssistantMessageToHistory(input.sessionID, input.messageID);
+    }
 
     this.withTurnParent(input.sessionID, input.parentID, () => {
       const span = this.traceState.tracer.startSpan("opencode.generation", {
@@ -1018,7 +1028,7 @@ export class LangfuseClient {
     }
 
     this.withTurnParent(sessionID, undefined, () => {
-      const generationInput = this.consumeGenerationInput(sessionID);
+      const generationInput = this.collectGenerationInput(sessionID);
       const span = this.traceState.tracer.startSpan("opencode.generation", {
         attributes: {
           "langfuse.observation.type": "generation",
@@ -1122,21 +1132,53 @@ export class LangfuseClient {
     ];
   }
 
-  private consumeGenerationInput(sessionID: string) {
-    const input = this.traceState.generationInputsBySession.get(sessionID);
+  private collectGenerationInput(sessionID: string) {
+    const pending = this.traceState.generationInputsBySession.get(sessionID);
     const sourceMessageID =
       this.traceState.toolResultSourceMessageIdsBySession.get(sessionID);
     this.traceState.generationInputsBySession.delete(sessionID);
     this.traceState.toolResultSourceMessageIdsBySession.delete(sessionID);
 
-    if (!sourceMessageID) {
-      return input;
+    if (sourceMessageID) {
+      this.appendAssistantMessageToHistory(sessionID, sourceMessageID);
     }
 
-    return [
-      ...(this.getAssistantMessage(sourceMessageID) ?? []),
-      ...(input ?? []),
-    ];
+    const history = this.getMessageHistory(sessionID);
+
+    if (pending) {
+      history.push(...pending);
+    }
+
+    return history.length ? [...history] : undefined;
+  }
+
+  private getMessageHistory(sessionID: string) {
+    let history = this.traceState.messageHistoriesBySession.get(sessionID);
+
+    if (!history) {
+      history = [];
+      this.traceState.messageHistoriesBySession.set(sessionID, history);
+    }
+
+    return history;
+  }
+
+  private appendAssistantMessageToHistory(
+    sessionID: string,
+    messageID: string,
+  ) {
+    if (this.traceState.historyAssistantMessageIds.has(messageID)) {
+      return;
+    }
+
+    const message = this.getAssistantMessage(messageID);
+
+    if (!message) {
+      return;
+    }
+
+    this.traceState.historyAssistantMessageIds.add(messageID);
+    this.getMessageHistory(sessionID).push(...message);
   }
 
   private rememberToolResult(input: {
@@ -1206,6 +1248,8 @@ export type LangfuseTraceState = {
   generationParentSpans: Map<string, ApiSpan>;
   generationInputsBySession: Map<string, ChatMlMessage[]>;
   toolResultSourceMessageIdsBySession: Map<string, string>;
+  messageHistoriesBySession: Map<string, ChatMlMessage[]>;
+  historyAssistantMessageIds: Set<string>;
 };
 
 export type MessagePart = Extract<
@@ -1363,6 +1407,8 @@ export const createLangfuseClient = (input: {
       generationParentSpans: new Map<string, ApiSpan>(),
       generationInputsBySession: new Map<string, ChatMlMessage[]>(),
       toolResultSourceMessageIdsBySession: new Map<string, string>(),
+      messageHistoriesBySession: new Map<string, ChatMlMessage[]>(),
+      historyAssistantMessageIds: new Set<string>(),
     };
 
     const processor = new LangfuseSpanProcessor({

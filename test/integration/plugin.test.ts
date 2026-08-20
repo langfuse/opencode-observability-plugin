@@ -63,7 +63,7 @@ type CapturedRequest = {
   body: typeof CapturedRequestBodySchema.Type;
 };
 
-type Plugin = (typeof import("../../dist/index.js"))["default"];
+type Plugin = (typeof import("../../src/index.js"))["default"];
 type PluginHooks = Awaited<ReturnType<Plugin>>;
 type PluginEvent = Parameters<NonNullable<PluginHooks["event"]>>[0]["event"];
 type SessionNextEvent =

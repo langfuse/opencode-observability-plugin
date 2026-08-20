@@ -725,7 +725,7 @@ const main = Effect.gen(function* () {
   return hooks;
 });
 
-export const LangfusePlugin: Plugin = async ({ client }) => {
+const LangfusePlugin: Plugin = async ({ client }) => {
   const clientLayer = Layer.succeed(OpencodeClientService, client);
 
   return Effect.runPromise(main.pipe(Effect.provide(clientLayer)));

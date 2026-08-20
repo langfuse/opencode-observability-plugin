@@ -1348,7 +1348,7 @@ function getCompletedReasoningTimestamp(part: MessagePart) {
   return undefined;
 }
 
-export type FormattedMessagePart =
+type FormattedMessagePart =
   | { type: string; text: string }
   | { type: string; filename?: string; url?: string }
   | { type: string; name?: string }
@@ -1356,14 +1356,14 @@ export type FormattedMessagePart =
   | { type: string; tool?: string; title?: string }
   | { type: string };
 
-export type SessionError = Extract<
+type SessionError = Extract<
   Parameters<NonNullable<Hooks["event"]>>[0]["event"],
   { type: "session.error" }
 >["properties"]["error"];
 
 export type SessionErrorInfo = NonNullable<SessionError>;
 
-export type UserMessageInput = {
+type UserMessageInput = {
   role: "user";
   content: FormattedMessagePart[];
   tools?: ToolDefinition[];

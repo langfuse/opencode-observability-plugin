@@ -128,6 +128,14 @@ type TestPluginEvent =
       };
     };
 
+const PluginEventSchema = Schema.declare(
+  (input): input is PluginEvent =>
+    typeof input === "object" &&
+    input !== null &&
+    "type" in input &&
+    "properties" in input,
+);
+
 const packageJson = Schema.decodeUnknownSync(
   Schema.parseJson(Schema.Struct({ version: Schema.String })),
 )(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
@@ -219,8 +227,9 @@ const getSessionSpan = (spans: OtlpSpan[], name: string, sessionID: string) => {
 const emitEvent = async (event: TestPluginEvent) => {
   // These events are emitted by current OpenCode versions but are not yet part of
   // the PluginEvent union exported by our pinned @opencode-ai/plugin version.
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
-  await hooks.event?.({ event: event as PluginEvent });
+  await hooks.event?.({
+    event: Schema.decodeUnknownSync(PluginEventSchema)(event),
+  });
 };
 
 const flushSession = async (sessionID: string) => {

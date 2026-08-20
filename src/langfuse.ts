@@ -589,8 +589,7 @@ export class LangfuseClient {
         messageID: input.messageID,
       } satisfies TurnObservation;
 
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-      if (input.messageID) {
+      if (input.messageID ?? "") {
         this.traceState.turnObservationsByMessageId.set(
           input.messageID,
           observation,

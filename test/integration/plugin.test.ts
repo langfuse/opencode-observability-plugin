@@ -14,34 +14,53 @@ import {
   test,
 } from "vitest";
 
-type OtlpValue = {
-  stringValue?: string;
-  boolValue?: boolean;
-  intValue?: number;
-};
+const OtlpValueSchema = Schema.Struct({
+  stringValue: Schema.optional(Schema.String),
+  boolValue: Schema.optional(Schema.Boolean),
+  intValue: Schema.optional(Schema.Number),
+});
+const OtlpAttributeSchema = Schema.Struct({
+  key: Schema.String,
+  value: OtlpValueSchema,
+});
+const OtlpSpanSchema = Schema.Struct({
+  name: Schema.String,
+  traceId: Schema.String,
+  spanId: Schema.String,
+  parentSpanId: Schema.optional(Schema.String),
+  startTimeUnixNano: Schema.String,
+  endTimeUnixNano: Schema.String,
+  attributes: Schema.Array(OtlpAttributeSchema),
+  status: Schema.optional(
+    Schema.Struct({
+      code: Schema.optional(Schema.Number),
+      message: Schema.optional(Schema.String),
+    }),
+  ),
+  events: Schema.optional(Schema.Array(Schema.Struct({ name: Schema.String }))),
+});
+const CapturedRequestBodySchema = Schema.Struct({
+  resourceSpans: Schema.Array(
+    Schema.Struct({
+      resource: Schema.optional(
+        Schema.Struct({
+          attributes: Schema.optional(Schema.Array(OtlpAttributeSchema)),
+        }),
+      ),
+      scopeSpans: Schema.Array(
+        Schema.Struct({ spans: Schema.Array(OtlpSpanSchema) }),
+      ),
+    }),
+  ),
+});
 
-type OtlpSpan = {
-  name: string;
-  traceId: string;
-  spanId: string;
-  parentSpanId?: string;
-  startTimeUnixNano: string;
-  endTimeUnixNano: string;
-  attributes: { key: string; value: OtlpValue }[];
-  status?: { code?: number; message?: string };
-  events?: { name: string }[];
-};
+type OtlpSpan = typeof OtlpSpanSchema.Type;
 
 type CapturedRequest = {
   method?: string;
   url?: string;
   headers: IncomingHttpHeaders;
-  body: {
-    resourceSpans: {
-      resource?: { attributes?: { key: string; value: OtlpValue }[] };
-      scopeSpans: { spans: OtlpSpan[] }[];
-    }[];
-  };
+  body: typeof CapturedRequestBodySchema.Type;
 };
 
 type Plugin = (typeof import("../../dist/index.js"))["default"];
@@ -471,10 +490,9 @@ beforeAll(async () => {
           method: request.method,
           url: request.url,
           headers: request.headers,
-          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
-          body: JSON.parse(
-            Buffer.concat(chunks).toString("utf8"),
-          ) as CapturedRequest["body"],
+          body: Schema.decodeUnknownSync(
+            Schema.parseJson(CapturedRequestBodySchema),
+          )(Buffer.concat(chunks).toString("utf8")),
         });
         response.writeHead(collectorStatus, {
           "content-type": "application/json",

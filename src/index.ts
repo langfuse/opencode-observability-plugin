@@ -700,14 +700,13 @@ const main = Effect.gen(function* () {
                   normalized.output ||
                   `MCP tool "${input.tool}" returned an error`,
                 completed: Date.now(),
-              }),
-            );
+              });
+            });
             return;
           }
 
           yield* Effect.try({
-            try: () =>
-              // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- Existing violation; fix separately.
+            try: () => {
               langfuse.traceToolEnd({
                 sessionID: input.sessionID,
                 callID: input.callID,

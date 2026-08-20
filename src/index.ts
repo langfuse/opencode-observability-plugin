@@ -276,7 +276,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
 
     if (
       event.type === "session.next.tool.called" &&
-      (event.properties.assistantMessageID ?? "")
+      event.properties.assistantMessageID != null
     ) {
       langfuse.rememberToolCall({
         callID: event.properties.callID,

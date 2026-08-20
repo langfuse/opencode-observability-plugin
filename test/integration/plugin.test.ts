@@ -477,7 +477,7 @@ beforeAll(async () => {
 
   process.env.LANGFUSE_PUBLIC_KEY = "pk-test";
   process.env.LANGFUSE_SECRET_KEY = "sk-test";
-  // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- Existing violation; fix separately.
+  // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- Existing violation tracked for incremental cleanup.
   collectorBaseUrl = `http://127.0.0.1:${address.port}`;
   process.env.LANGFUSE_BASE_URL = collectorBaseUrl;
   process.env.LANGFUSE_ENVIRONMENT = "integration-test";

@@ -366,7 +366,9 @@ export class LangfuseClient {
         "langfuse.observation.metadata",
         JSON.stringify({
           agent: updatedStep.agent,
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Existing violation; fix separately.
           providerID: updatedStep.model?.providerID,
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Existing violation; fix separately.
           variant: updatedStep.model?.variant,
           snapshot: updatedStep.snapshot,
         }),
@@ -493,6 +495,7 @@ export class LangfuseClient {
       role: "user" as const,
       content: input.parts.map((part) => {
         if (part.type === "text") {
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Existing violation; fix separately.
           return { type: part.type, text: part.text ?? "" };
         }
 
@@ -620,6 +623,7 @@ export class LangfuseClient {
       });
     };
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- Existing violation; fix separately.
     parentSpan
       ? context.with(trace.setSpan(context.active(), parentSpan), startTurn)
       : startTurn();
@@ -1097,6 +1101,7 @@ export class LangfuseClient {
     });
     span.recordException({ message: input.error });
     span.end(new Date(input.completed));
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Existing violation; fix separately.
     if (observation) {
       this.rememberToolResult({
         sessionID: observation.sessionID,
@@ -1294,6 +1299,7 @@ export class LangfuseClient {
 
     if (
       "data" in error &&
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Existing violation; fix separately.
       error.data &&
       typeof error.data === "object" &&
       "message" in error.data &&
@@ -1418,9 +1424,11 @@ export class LangfuseClientService extends EffectContext.Tag(
 
 const makeUserIdSpanProcessor = (userId: string) =>
   ({
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- Existing violation; fix separately.
     onStart: (span: Span, _parentContext: unknown) => {
       span.setAttribute("langfuse.user.id", userId);
     },
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function -- Existing violation; fix separately.
     onEnd: (_span: ReadableSpan) => {},
     shutdown: () => Promise.resolve(),
     forceFlush: () => Promise.resolve(),
@@ -1428,9 +1436,11 @@ const makeUserIdSpanProcessor = (userId: string) =>
 
 const makePluginVersionSpanProcessor = () =>
   ({
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- Existing violation; fix separately.
     onStart: (span: Span, _parentContext: unknown) => {
       span.setAttribute("langfuse.plugin.version", PLUGIN_VERSION);
     },
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function -- Existing violation; fix separately.
     onEnd: (_span: ReadableSpan) => {},
     shutdown: () => Promise.resolve(),
     forceFlush: () => Promise.resolve(),
@@ -1439,6 +1449,7 @@ const makePluginVersionSpanProcessor = () =>
 // Langfuse's OTEL processor may auto-mark exported spans as app roots, this overrides that.
 const makeAppRootSpanProcessor = (tracerName: string) =>
   ({
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- Existing violation; fix separately.
     onStart: (span: Span, _parentContext: unknown) => {
       if (span.instrumentationScope.name !== tracerName) {
         return;
@@ -1449,6 +1460,7 @@ const makeAppRootSpanProcessor = (tracerName: string) =>
         span.name === "opencode.turn",
       );
     },
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function -- Existing violation; fix separately.
     onEnd: (_span: ReadableSpan) => {},
     shutdown: () => Promise.resolve(),
     forceFlush: () => Promise.resolve(),
@@ -1516,6 +1528,7 @@ export const createLangfuseClient = (input: {
     });
     let isShutdown = false;
 
+    // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- Existing violation; fix separately.
     yield* Effect.sync(() => provider.register());
 
     return new LangfuseClient({

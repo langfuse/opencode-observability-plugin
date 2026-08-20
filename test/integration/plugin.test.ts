@@ -13,12 +13,14 @@ import {
   test,
 } from "vitest";
 
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- Existing violation; fix separately.
 interface OtlpValue {
   stringValue?: string;
   boolValue?: boolean;
   intValue?: number;
 }
 
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- Existing violation; fix separately.
 interface OtlpSpan {
   name: string;
   traceId: string;
@@ -26,18 +28,24 @@ interface OtlpSpan {
   parentSpanId?: string;
   startTimeUnixNano: string;
   endTimeUnixNano: string;
+  // eslint-disable-next-line @typescript-eslint/array-type -- Existing violation; fix separately.
   attributes: Array<{ key: string; value: OtlpValue }>;
   status?: { code?: number; message?: string };
+  // eslint-disable-next-line @typescript-eslint/array-type -- Existing violation; fix separately.
   events?: Array<{ name: string }>;
 }
 
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- Existing violation; fix separately.
 interface CapturedRequest {
   method?: string;
   url?: string;
   headers: IncomingHttpHeaders;
   body: {
+    // eslint-disable-next-line @typescript-eslint/array-type -- Existing violation; fix separately.
     resourceSpans: Array<{
+      // eslint-disable-next-line @typescript-eslint/array-type -- Existing violation; fix separately.
       resource?: { attributes?: Array<{ key: string; value: OtlpValue }> };
+      // eslint-disable-next-line @typescript-eslint/array-type -- Existing violation; fix separately.
       scopeSpans: Array<{ spans: OtlpSpan[] }>;
     }>;
   };
@@ -465,6 +473,7 @@ beforeAll(async () => {
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
+    // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- Existing violation; fix separately.
     server.listen(0, "127.0.0.1", () => resolve());
   });
 
@@ -475,6 +484,7 @@ beforeAll(async () => {
 
   process.env.LANGFUSE_PUBLIC_KEY = "pk-test";
   process.env.LANGFUSE_SECRET_KEY = "sk-test";
+  // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- Existing violation; fix separately.
   collectorBaseUrl = `http://127.0.0.1:${address.port}`;
   process.env.LANGFUSE_BASE_URL = collectorBaseUrl;
   process.env.LANGFUSE_ENVIRONMENT = "integration-test";
@@ -501,6 +511,7 @@ afterEach(async () => {
 afterAll(async () => {
   try {
     await new Promise<void>((resolve, reject) =>
+      // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- Existing violation; fix separately.
       server.close((error) => (error ? reject(error) : resolve())),
     );
   } finally {
@@ -513,6 +524,7 @@ afterAll(async () => {
       LANGFUSE_USER_ID: originalEnvironment.userId,
     })) {
       if (value === undefined) {
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- Existing violation; fix separately.
         delete process.env[name];
       } else {
         process.env[name] = value;
@@ -521,6 +533,7 @@ afterAll(async () => {
   }
 });
 
+// eslint-disable-next-line @typescript-eslint/no-deprecated -- Existing violation; fix separately.
 describe.sequential("built plugin", () => {
   test("exports a complete multi-turn OpenCode session", async () => {
     const sessionID = "happy-session";
@@ -600,6 +613,7 @@ describe.sequential("built plugin", () => {
       expect(getJsonAttribute(span, "langfuse.observation.input")).toEqual([
         {
           role: "user",
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Existing violation; fix separately.
           content: expect.any(Array),
         },
       ]);
@@ -1088,9 +1102,13 @@ describe.sequential("built plugin", () => {
     const userMessageID = "out-of-order-tool-parenting-user";
     const started = startedAt;
     const generations = [1, 2, 3].map((index) => ({
+      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- Existing violation; fix separately.
       assistantMessageID: `out-of-order-tool-parenting-assistant-${index}`,
+      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- Existing violation; fix separately.
       stepID: `out-of-order-tool-parenting-step-${index}`,
+      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- Existing violation; fix separately.
       tool: `out-of-order-tool-${index}`,
+      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- Existing violation; fix separately.
       callID: `out-of-order-tool-parenting-call-${index}`,
     }));
 
@@ -1215,6 +1233,7 @@ describe.sequential("built plugin", () => {
       });
 
       expect(span).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- Existing violation; fix separately.
       return span!;
     });
     const toolSpans = generations.map((generation) =>
@@ -1367,6 +1386,7 @@ describe.sequential("built plugin", () => {
 
     const toolSpans = spans.filter((span) => span.name === "bash");
     expect(toolSpans).toHaveLength(1);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- Existing violation; fix separately.
     expect(toolSpans[0].parentSpanId).toBe(firstGeneration!.spanId);
     expect(toolSpans[0].startTimeUnixNano).toBe(
       (BigInt(toolStarted) * 1_000_000n).toString(),
@@ -1384,6 +1404,7 @@ describe.sequential("built plugin", () => {
       output: "07f9a68 Fix tool observation parenting",
     });
     expect(
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- Existing violation; fix separately.
       getJsonAttribute(secondGeneration!, "langfuse.observation.input"),
     ).toEqual([
       {
@@ -1657,6 +1678,7 @@ describe.sequential("built plugin", () => {
       [
         expect.objectContaining({
           role: "assistant",
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Existing violation; fix separately.
           content: expect.stringContaining("Recovered answer"),
           tool_calls: [
             {
@@ -1743,6 +1765,7 @@ describe.sequential("built plugin", () => {
       {
         role: "user",
         content: [{ type: "text", text: "Retry tool discovery" }],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Existing violation; fix separately.
         tools: expect.arrayContaining([
           expect.objectContaining({ name: "read" }),
           expect.objectContaining({ name: "webfetch" }),
@@ -2038,6 +2061,7 @@ describe.sequential("built plugin", () => {
       throw new Error("Expected the unavailable collector to use a TCP port");
     }
     hooksDisposed = false;
+    // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- Existing violation; fix separately.
     hooks = await createHooks(`http://127.0.0.1:${address.port}`);
     try {
       await sendUserMessage({
@@ -2059,6 +2083,7 @@ describe.sequential("built plugin", () => {
         await disposeHooks();
         await new Promise<void>((resolve, reject) =>
           unavailableServer.close((error) =>
+            // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- Existing violation; fix separately.
             error ? reject(error) : resolve(),
           ),
         );
@@ -2134,6 +2159,7 @@ describe.sequential("built plugin", () => {
     } finally {
       for (const [name, value] of Object.entries(originalValues)) {
         if (value === undefined) {
+          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- Existing violation; fix separately.
           delete process.env[name];
         } else {
           process.env[name] = value;

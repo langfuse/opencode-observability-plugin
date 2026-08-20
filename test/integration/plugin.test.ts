@@ -1160,8 +1160,7 @@ describe("built plugin", { concurrent: false }, () => {
     const generations = [1, 2, 3].map((index) => ({
       assistantMessageID: `out-of-order-tool-parenting-assistant-${index.toString()}`,
       stepID: `out-of-order-tool-parenting-step-${index.toString()}`,
-      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- Existing violation tracked for incremental cleanup.
-      tool: `out-of-order-tool-${index}`,
+      tool: `out-of-order-tool-${index.toString()}`,
       // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- Existing violation tracked for incremental cleanup.
       callID: `out-of-order-tool-parenting-call-${index}`,
     }));

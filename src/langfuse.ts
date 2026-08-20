@@ -1518,8 +1518,7 @@ export const createLangfuseClient = (input: {
       resource: defaultResource()
         .merge(detectResources({ detectors: [envDetector] }))
         .merge(
-          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-          input.serviceName
+          (input.serviceName ?? "")
             ? resourceFromAttributes({ "service.name": input.serviceName })
             : null,
         ),

@@ -2052,8 +2052,9 @@ describe.sequential("built plugin", () => {
       process.env.OTEL_EXPORTER_OTLP_TRACES_TIMEOUT;
     process.env.OTEL_EXPORTER_OTLP_TRACES_TIMEOUT = "100";
     const unavailableServer = createServer();
-    // eslint-disable-next-line @typescript-eslint/strict-void-return -- Existing violation; fix separately.
-    unavailableServer.on("connection", (socket) => socket.destroy());
+    unavailableServer.on("connection", (socket) => {
+      socket.destroy();
+    });
     await new Promise<void>((resolve, reject) => {
       unavailableServer.once("error", reject);
       unavailableServer.listen(0, "127.0.0.1", resolve);

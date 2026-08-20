@@ -836,8 +836,7 @@ export class LangfuseClient {
             input.assistantMessageID,
           ) ??
           (activeStep?.messageID === input.assistantMessageID ||
-          // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
-          !(activeStep?.messageID != null)
+          activeStep?.messageID == null
             ? activeStep
             : undefined))
         : activeStep;

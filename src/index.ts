@@ -163,7 +163,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
       langfuse.endActiveGenerationSteps(sessionID);
       langfuse.endActiveTurnObservations(sessionID);
 
-      if ((sessionID ?? "") !== "") {
+      if (sessionID !== undefined && sessionID !== "") {
         langfuse.clearSessionTraceState(sessionID);
       } else {
         langfuse.clearTraceState();

@@ -136,6 +136,14 @@ const PluginEventSchema = Schema.declare(
     "properties" in input,
 );
 
+const PluginClientSchema = Schema.declare(
+  (input): input is Parameters<Plugin>[0]["client"] =>
+    typeof input === "object" &&
+    input !== null &&
+    "app" in input &&
+    "tool" in input,
+);
+
 const packageJson = Schema.decodeUnknownSync(
   Schema.parseJson(Schema.Struct({ version: Schema.String })),
 )(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
@@ -388,8 +396,7 @@ const completeGeneration = async (input: {
 
 const createHooks = async (baseUrl: string) => {
   process.env.LANGFUSE_BASE_URL = baseUrl;
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
-  const client = {
+  const client = Schema.decodeUnknownSync(PluginClientSchema)({
     app: {
       log: () => Promise.resolve(),
     },
@@ -425,7 +432,7 @@ const createHooks = async (baseUrl: string) => {
         });
       },
     },
-  } as unknown as Parameters<Plugin>[0]["client"];
+  });
 
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
   return plugin({ client } as Parameters<Plugin>[0]);

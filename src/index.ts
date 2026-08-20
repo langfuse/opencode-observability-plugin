@@ -271,8 +271,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
 
     if (
       event.type === "session.next.tool.called" &&
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-      event.properties.assistantMessageID
+      (event.properties.assistantMessageID ?? "")
     ) {
       langfuse.rememberToolCall({
         callID: event.properties.callID,

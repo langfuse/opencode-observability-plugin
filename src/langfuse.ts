@@ -1447,8 +1447,7 @@ const makePluginVersionSpanProcessor = () =>
 // Langfuse's OTEL processor may auto-mark exported spans as app roots, this overrides that.
 const makeAppRootSpanProcessor = (tracerName: string) =>
   ({
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- Existing violation tracked for incremental cleanup.
-    onStart: (span: Span, _parentContext: unknown) => {
+    onStart: (span: Span) => {
       if (span.instrumentationScope.name !== tracerName) {
         return;
       }

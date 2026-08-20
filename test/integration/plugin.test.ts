@@ -509,13 +509,12 @@ afterEach(async () => {
 
 afterAll(async () => {
   try {
-    await new Promise<void>((resolve, reject) =>
-      // eslint-disable-next-line @typescript-eslint/strict-void-return -- Existing violation; fix separately.
+    await new Promise<void>((resolve, reject) => {
       server.close((error) => {
         // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- Existing violation tracked for incremental cleanup.
         error ? reject(error) : resolve();
-      }),
-    );
+      });
+    });
   } finally {
     for (const [name, value] of Object.entries({
       LANGFUSE_PUBLIC_KEY: originalEnvironment.publicKey,

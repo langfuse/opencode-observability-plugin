@@ -608,7 +608,7 @@ describe.sequential("built plugin", () => {
       expect(getJsonAttribute(span, "langfuse.observation.input")).toEqual([
         {
           role: "user",
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Existing violation; fix separately.
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Existing violation tracked for incremental cleanup.
           content: expect.any(Array),
         },
       ]);

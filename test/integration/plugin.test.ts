@@ -168,6 +168,14 @@ const PluginInputSchema = Schema.declare(
     typeof input === "object" && input !== null && "client" in input,
 );
 
+const PluginModuleSchema = Schema.declare(
+  (input): input is { default: Plugin } =>
+    typeof input === "object" &&
+    input !== null &&
+    "default" in input &&
+    typeof input.default === "function",
+);
+
 const packageJson = Schema.decodeUnknownSync(
   Schema.parseJson(Schema.Struct({ version: Schema.String })),
 )(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
@@ -529,8 +537,7 @@ beforeAll(async () => {
 
   const builtPluginUrl = new URL("../../dist/index.js", import.meta.url);
   const builtPlugin: unknown = await import(builtPluginUrl.href);
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
-  plugin = (builtPlugin as { default: Plugin }).default;
+  plugin = Schema.decodeUnknownSync(PluginModuleSchema)(builtPlugin).default;
 });
 
 beforeEach(async () => {

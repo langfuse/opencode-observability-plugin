@@ -1439,7 +1439,9 @@ describe("built plugin", { concurrent: false }, () => {
     if (!firstGeneration) {
       throw new Error("Expected the first generation");
     }
-    expect(secondGeneration).toBeDefined();
+    if (!secondGeneration) {
+      throw new Error("Expected the second generation");
+    }
 
     const toolSpans = spans.filter((span) => span.name === "bash");
     expect(toolSpans).toHaveLength(1);
@@ -1460,8 +1462,7 @@ describe("built plugin", { concurrent: false }, () => {
       output: "07f9a68 Fix tool observation parenting",
     });
     expect(
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- Existing violation tracked for incremental cleanup.
-      getJsonAttribute(secondGeneration!, "langfuse.observation.input"),
+      getJsonAttribute(secondGeneration, "langfuse.observation.input"),
     ).toEqual([
       {
         role: "assistant",

@@ -387,7 +387,7 @@ export class LangfuseClient {
     }
 
     // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-    if (existingStep && !existingStep.messageID && messageID) {
+    if (existingStep && !(existingStep.messageID ?? "") && messageID) {
       const updatedStep = {
         ...existingStep,
         sessionID: input.sessionID,

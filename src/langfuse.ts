@@ -1076,8 +1076,8 @@ export class LangfuseClient {
 
     if (
       !this.traceState.activeToolObservations.has(input.callID) &&
-      (input.sessionID ?? "") &&
-      (input.tool ?? "")
+      input.sessionID != null &&
+      input.tool != null
     ) {
       this.traceToolStart({
         sessionID: input.sessionID,

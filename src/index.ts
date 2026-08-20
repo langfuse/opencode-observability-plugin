@@ -336,8 +336,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
         started: message.time.created,
       });
 
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-      if (!message.time.completed) {
+      if (!(message.time.completed ?? 0)) {
         return;
       }
 

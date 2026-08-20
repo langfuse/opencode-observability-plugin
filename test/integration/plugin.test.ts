@@ -127,6 +127,7 @@ type TestPluginEvent =
       };
     };
 
+// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
 const packageJson = JSON.parse(
   readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
 ) as { version?: unknown };
@@ -189,6 +190,7 @@ const getJsonAttribute = (span: OtlpSpan, key: string) => {
     throw new Error(`Expected ${span.name} attribute ${key} to be JSON`);
   }
 
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
   return JSON.parse(value) as unknown;
 };
 
@@ -222,6 +224,7 @@ const getSessionSpan = (spans: OtlpSpan[], name: string, sessionID: string) => {
 const emitEvent = async (event: TestPluginEvent) => {
   // These events are emitted by current OpenCode versions but are not yet part of
   // the PluginEvent union exported by our pinned @opencode-ai/plugin version.
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
   await hooks.event?.({ event: event as PluginEvent });
 };
 
@@ -381,6 +384,7 @@ const completeGeneration = async (input: {
 
 const createHooks = async (baseUrl: string) => {
   process.env.LANGFUSE_BASE_URL = baseUrl;
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
   const client = {
     app: {
       log: () => Promise.resolve(),
@@ -419,6 +423,7 @@ const createHooks = async (baseUrl: string) => {
     },
   } as unknown as Parameters<Plugin>[0]["client"];
 
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
   return plugin({ client } as Parameters<Plugin>[0]);
 };
 
@@ -451,6 +456,7 @@ beforeAll(async () => {
           method: request.method,
           url: request.url,
           headers: request.headers,
+          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
           body: JSON.parse(
             Buffer.concat(chunks).toString("utf8"),
           ) as CapturedRequest["body"],
@@ -490,6 +496,7 @@ beforeAll(async () => {
 
   const builtPluginUrl = new URL("../../dist/index.js", import.meta.url);
   const builtPlugin: unknown = await import(builtPluginUrl.href);
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
   plugin = (builtPlugin as { default: Plugin }).default;
 });
 
@@ -782,6 +789,7 @@ describe.sequential("built plugin", () => {
         tool: "mcp_test_tool",
         args: { query: "test" },
       },
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
       {
         content: [
           { type: "text", text: "MCP tool result" },
@@ -810,6 +818,7 @@ describe.sequential("built plugin", () => {
         tool: "mcp_failing_tool",
         args: { query: "fail" },
       },
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Existing assertion; replace separately.
       {
         content: [{ type: "text", text: "MCP tool failed" }],
         isError: true,

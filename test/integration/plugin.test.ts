@@ -1760,7 +1760,7 @@ describe.sequential("built plugin", () => {
       {
         role: "user",
         content: [{ type: "text", text: "Retry tool discovery" }],
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Existing violation; fix separately.
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Existing violation tracked for incremental cleanup.
         tools: expect.arrayContaining([
           expect.objectContaining({ name: "read" }),
           expect.objectContaining({ name: "webfetch" }),

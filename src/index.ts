@@ -588,8 +588,7 @@ const main = Effect.gen(function* () {
       runHook(
         "config",
         Effect.gen(function* () {
-          // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-          if (!config.experimental?.openTelemetry) {
+          if (!(config.experimental?.openTelemetry ?? false)) {
             yield* log(
               "warn",
               "[Tracing disabled] Please enable `experimental.openTelemetry` in your opencode.jsonc to use the Langfuse plugin",

@@ -592,8 +592,7 @@ afterAll(async () => {
   }
 });
 
-// eslint-disable-next-line @typescript-eslint/no-deprecated -- Existing violation tracked for incremental cleanup.
-describe.sequential("built plugin", () => {
+describe("built plugin", { concurrent: false }, () => {
   test("exports a complete multi-turn OpenCode session", async () => {
     const sessionID = "happy-session";
     const started = startedAt;

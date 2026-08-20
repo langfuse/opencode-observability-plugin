@@ -429,7 +429,7 @@ export class LangfuseClient {
       return;
     }
 
-    if (!(messageID ?? "") && existingStep) {
+    if (!(messageID != null) && existingStep) {
       return;
     }
 

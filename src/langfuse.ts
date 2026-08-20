@@ -382,8 +382,7 @@ export class LangfuseClient {
 
     if (
       existingStep &&
-      // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
-      !(existingStep.messageID != null) &&
+      existingStep.messageID == null &&
       messageID != null
     ) {
       const updatedStep = {

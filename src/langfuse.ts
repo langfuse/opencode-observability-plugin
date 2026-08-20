@@ -1287,8 +1287,7 @@ export class LangfuseClient {
     });
     this.traceState.generationInputsBySession.set(input.sessionID, toolResults);
 
-    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-    if (messageID) {
+    if (messageID ?? "") {
       this.traceState.toolResultSourceMessageIdsBySession.set(
         input.sessionID,
         messageID,

@@ -115,7 +115,7 @@ const loadLangfuseCredentials = Effect.gen(function* () {
   const secretKey = process.env.LANGFUSE_SECRET_KEY;
 
   // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-  if (publicKey && secretKey) {
+  if (Boolean(publicKey) && secretKey) {
     return {
       publicKey,
       secretKey,

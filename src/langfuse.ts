@@ -1195,7 +1195,7 @@ export class LangfuseClient {
     messageID?: string,
   ) {
     const parentSpan =
-      ((messageID ?? "")
+      (messageID != null
         ? this.traceState.generationSpansByMessageId.get(messageID)
         : undefined) ??
       this.traceState.activeGenerationSteps.get(sessionID)?.span ??

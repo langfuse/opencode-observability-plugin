@@ -332,10 +332,10 @@ export class LangfuseClient {
     snapshot?: string;
   }) {
     const messageID = input.assistantMessageID;
-    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-    const existingMessageStep = messageID
-      ? this.traceState.activeGenerationStepsByMessageId.get(messageID)
-      : undefined;
+    const existingMessageStep =
+      (messageID ?? "")
+        ? this.traceState.activeGenerationStepsByMessageId.get(messageID)
+        : undefined;
     const existingStep = this.traceState.activeGenerationSteps.get(
       input.sessionID,
     );

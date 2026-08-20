@@ -157,7 +157,7 @@ export class LangfuseClient {
 
     for (const [activeSessionID, step] of this.traceState
       .activeGenerationSteps) {
-      if (!(sessionID ?? "") || step.sessionID === sessionID) {
+      if (!(sessionID != null) || step.sessionID === sessionID) {
         this.traceState.activeGenerationSteps.delete(activeSessionID);
         this.traceState.generationParentSpans.delete(activeSessionID);
       }

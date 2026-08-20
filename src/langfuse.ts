@@ -715,8 +715,8 @@ export class LangfuseClient {
     );
     const step =
       this.traceState.activeGenerationStepsByMessageId.get(input.messageID) ??
-      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-      (activeStep?.messageID === input.messageID || !activeStep?.messageID
+      (activeStep?.messageID === input.messageID ||
+      !(activeStep?.messageID ?? "")
         ? activeStep
         : undefined);
 

@@ -2,11 +2,7 @@ import { LangfuseSpanProcessor } from "@langfuse/otel";
 import type { Hooks } from "@opencode-ai/plugin";
 import { SpanStatusCode, context, trace } from "@opentelemetry/api";
 import type { Span as ApiSpan, Tracer } from "@opentelemetry/api";
-import type {
-  ReadableSpan,
-  Span,
-  SpanProcessor,
-} from "@opentelemetry/sdk-trace-base";
+import type { Span, SpanProcessor } from "@opentelemetry/sdk-trace-base";
 import {
   defaultResource,
   detectResources,
@@ -110,7 +106,7 @@ export class LangfuseClient {
   endActiveToolObservations(sessionID?: string, error?: SessionErrorInfo) {
     for (const [callID, observation] of this.traceState
       .activeToolObservations) {
-      if (sessionID && observation.sessionID !== sessionID) {
+      if (sessionID != null && observation.sessionID !== sessionID) {
         continue;
       }
 
@@ -138,7 +134,7 @@ export class LangfuseClient {
     ]);
 
     for (const step of activeSteps) {
-      if (sessionID && step.sessionID !== sessionID) {
+      if (sessionID != null && step.sessionID !== sessionID) {
         continue;
       }
 
@@ -157,7 +153,7 @@ export class LangfuseClient {
 
     for (const [activeSessionID, step] of this.traceState
       .activeGenerationSteps) {
-      if (!sessionID || step.sessionID === sessionID) {
+      if (sessionID == null || step.sessionID === sessionID) {
         this.traceState.activeGenerationSteps.delete(activeSessionID);
         this.traceState.generationParentSpans.delete(activeSessionID);
       }
@@ -165,7 +161,7 @@ export class LangfuseClient {
 
     for (const [messageID, step] of this.traceState
       .activeGenerationStepsByMessageId) {
-      if (!sessionID || step.sessionID === sessionID) {
+      if (sessionID == null || step.sessionID === sessionID) {
         this.traceState.activeGenerationStepsByMessageId.delete(messageID);
       }
     }
@@ -178,7 +174,7 @@ export class LangfuseClient {
     ]);
 
     for (const observation of observations) {
-      if (sessionID && observation.sessionID !== sessionID) {
+      if (sessionID != null && observation.sessionID !== sessionID) {
         continue;
       }
 
@@ -187,14 +183,14 @@ export class LangfuseClient {
 
     for (const [messageID, observation] of this.traceState
       .turnObservationsByMessageId) {
-      if (!sessionID || observation.sessionID === sessionID) {
+      if (sessionID == null || observation.sessionID === sessionID) {
         this.traceState.turnObservationsByMessageId.delete(messageID);
       }
     }
 
     for (const [activeSessionID, observation] of this.traceState
       .latestTurnObservationsBySession) {
-      if (!sessionID || observation.sessionID === sessionID) {
+      if (sessionID == null || observation.sessionID === sessionID) {
         this.traceState.latestTurnObservationsBySession.delete(activeSessionID);
       }
     }
@@ -204,7 +200,7 @@ export class LangfuseClient {
     sessionID: string;
     parentSessionID?: string;
   }) {
-    if (input.parentSessionID) {
+    if (input.parentSessionID != null) {
       this.traceState.sessionParentIds.set(
         input.sessionID,
         input.parentSessionID,
@@ -279,7 +275,7 @@ export class LangfuseClient {
 
     this.traceState.tracedReasoningIds.add(reasoningTraceKey);
 
-    if (!input.messageID) {
+    if (input.messageID == null) {
       return;
     }
 
@@ -332,22 +328,23 @@ export class LangfuseClient {
     snapshot?: string;
   }) {
     const messageID = input.assistantMessageID;
-    const existingMessageStep = messageID
-      ? this.traceState.activeGenerationStepsByMessageId.get(messageID)
-      : undefined;
+    const existingMessageStep =
+      messageID != null
+        ? this.traceState.activeGenerationStepsByMessageId.get(messageID)
+        : undefined;
     const existingStep = this.traceState.activeGenerationSteps.get(
       input.sessionID,
     );
 
     if (
-      messageID &&
+      messageID != null &&
       !existingMessageStep &&
       this.traceState.generationSpansByMessageId.has(messageID)
     ) {
       return;
     }
 
-    if (existingMessageStep && messageID) {
+    if (existingMessageStep && messageID != null) {
       const updatedStep = {
         ...existingMessageStep,
         agent: input.agent,
@@ -366,8 +363,8 @@ export class LangfuseClient {
         "langfuse.observation.metadata",
         JSON.stringify({
           agent: updatedStep.agent,
-          providerID: updatedStep.model?.providerID,
-          variant: updatedStep.model?.variant,
+          providerID: updatedStep.model.providerID,
+          variant: updatedStep.model.variant,
           snapshot: updatedStep.snapshot,
         }),
       );
@@ -383,7 +380,7 @@ export class LangfuseClient {
       return;
     }
 
-    if (existingStep && !existingStep.messageID && messageID) {
+    if (existingStep && existingStep.messageID == null && messageID != null) {
       const updatedStep = {
         ...existingStep,
         sessionID: input.sessionID,
@@ -422,7 +419,7 @@ export class LangfuseClient {
       return;
     }
 
-    if (!messageID && existingStep) {
+    if (messageID == null && existingStep) {
       return;
     }
 
@@ -461,7 +458,7 @@ export class LangfuseClient {
         span,
         snapshot: input.snapshot,
       });
-      if (messageID) {
+      if (messageID != null) {
         const step = this.traceState.activeGenerationSteps.get(input.sessionID);
         if (step) {
           this.traceState.activeGenerationStepsByMessageId.set(messageID, step);
@@ -481,7 +478,7 @@ export class LangfuseClient {
     tools?: ToolDefinition[];
   }) {
     if (
-      input.messageID &&
+      input.messageID != null &&
       this.traceState.tracedMessageIds.has(input.messageID)
     ) {
       return;
@@ -493,7 +490,7 @@ export class LangfuseClient {
       role: "user" as const,
       content: input.parts.map((part) => {
         if (part.type === "text") {
-          return { type: part.type, text: part.text ?? "" };
+          return { type: part.type, text: part.text };
         }
 
         if (part.type === "file") {
@@ -530,7 +527,7 @@ export class LangfuseClient {
     const generationInput = [
       {
         ...formattedMessage,
-        ...(input.tools?.length ? { tools: input.tools } : {}),
+        ...((input.tools?.length ?? 0) > 0 ? { tools: input.tools } : {}),
       },
     ];
 
@@ -539,7 +536,7 @@ export class LangfuseClient {
       generationInput,
     );
 
-    if (input.messageID) {
+    if (input.messageID != null) {
       this.traceState.tracedMessageIds.add(input.messageID);
     }
 
@@ -585,7 +582,7 @@ export class LangfuseClient {
         messageID: input.messageID,
       } satisfies TurnObservation;
 
-      if (input.messageID) {
+      if (input.messageID != null) {
         this.traceState.turnObservationsByMessageId.set(
           input.messageID,
           observation,
@@ -620,9 +617,11 @@ export class LangfuseClient {
       });
     };
 
-    parentSpan
-      ? context.with(trace.setSpan(context.active(), parentSpan), startTurn)
-      : startTurn();
+    if (parentSpan) {
+      context.with(trace.setSpan(context.active(), parentSpan), startTurn);
+    } else {
+      startTurn();
+    }
   }
 
   rememberAssistantPart(part: MessagePart) {
@@ -710,7 +709,8 @@ export class LangfuseClient {
     );
     const step =
       this.traceState.activeGenerationStepsByMessageId.get(input.messageID) ??
-      (activeStep?.messageID === input.messageID || !activeStep?.messageID
+      (activeStep?.messageID === input.messageID ||
+      activeStep?.messageID == null
         ? activeStep
         : undefined);
 
@@ -830,15 +830,16 @@ export class LangfuseClient {
     const activeStep = this.traceState.activeGenerationSteps.get(
       input.sessionID,
     );
-    const step = input.assistantMessageID
-      ? (this.traceState.activeGenerationStepsByMessageId.get(
-          input.assistantMessageID,
-        ) ??
-        (activeStep?.messageID === input.assistantMessageID ||
-        !activeStep?.messageID
-          ? activeStep
-          : undefined))
-      : activeStep;
+    const step =
+      input.assistantMessageID != null
+        ? (this.traceState.activeGenerationStepsByMessageId.get(
+            input.assistantMessageID,
+          ) ??
+          (activeStep?.messageID === input.assistantMessageID ||
+          activeStep?.messageID == null
+            ? activeStep
+            : undefined))
+        : activeStep;
 
     if (step) {
       step.span.setAttribute(
@@ -861,7 +862,7 @@ export class LangfuseClient {
       step.span.recordException(input.error);
       step.span.end(new Date(input.completed));
       const messageID = input.assistantMessageID ?? step.messageID;
-      if (messageID) {
+      if (messageID != null) {
         this.traceState.activeGenerationStepsByMessageId.delete(messageID);
       }
 
@@ -936,7 +937,7 @@ export class LangfuseClient {
 
     turn.span.end();
 
-    if (turn.messageID) {
+    if (turn.messageID != null) {
       this.traceState.turnObservationsByMessageId.delete(turn.messageID);
     }
 
@@ -1065,8 +1066,8 @@ export class LangfuseClient {
 
     if (
       !this.traceState.activeToolObservations.has(input.callID) &&
-      input.sessionID &&
-      input.tool
+      input.sessionID != null &&
+      input.tool != null
     ) {
       this.traceToolStart({
         sessionID: input.sessionID,
@@ -1097,15 +1098,13 @@ export class LangfuseClient {
     });
     span.recordException({ message: input.error });
     span.end(new Date(input.completed));
-    if (observation) {
-      this.rememberToolResult({
-        sessionID: observation.sessionID,
-        callID: input.callID,
-        tool: input.tool ?? observation.tool,
-        content: input.error,
-        messageID: input.messageID,
-      });
-    }
+    this.rememberToolResult({
+      sessionID: observation.sessionID,
+      callID: input.callID,
+      tool: input.tool ?? observation.tool,
+      content: input.error,
+      messageID: input.messageID,
+    });
     this.traceState.activeToolObservations.delete(input.callID);
     this.traceState.finalizedToolCallIds.add(input.callID);
     this.traceState.toolMessageIdsByCallId.delete(input.callID);
@@ -1159,7 +1158,7 @@ export class LangfuseClient {
 
   private getTurnObservation(sessionID: string, messageID: string | undefined) {
     return (
-      (messageID
+      (messageID != null
         ? this.traceState.turnObservationsByMessageId.get(messageID)
         : undefined) ??
       this.traceState.latestTurnObservationsBySession.get(sessionID)
@@ -1169,7 +1168,7 @@ export class LangfuseClient {
   private getSessionParentSpan(sessionID: string) {
     const parentSessionID = this.traceState.sessionParentIds.get(sessionID);
 
-    if (!parentSessionID) {
+    if (parentSessionID == null) {
       return undefined;
     }
 
@@ -1186,7 +1185,7 @@ export class LangfuseClient {
     messageID?: string,
   ) {
     const parentSpan =
-      (messageID
+      (messageID != null
         ? this.traceState.generationSpansByMessageId.get(messageID)
         : undefined) ??
       this.traceState.activeGenerationSteps.get(sessionID)?.span ??
@@ -1204,14 +1203,14 @@ export class LangfuseClient {
     const content = parts
       .filter(
         (part): part is Extract<MessagePart, { type: "text" }> =>
-          part.type === "text" && Boolean(part.text),
+          part.type === "text" && part.text !== "",
       )
       .map((part) => part.text)
       .join("");
     const thinking = parts
       .filter(
         (part): part is Extract<MessagePart, { type: "reasoning" }> =>
-          part.type === "reasoning" && Boolean(part.text),
+          part.type === "reasoning" && part.text !== "",
       )
       .map((part) => ({ type: "thinking" as const, content: part.text }));
     const toolCallsById = new Map(
@@ -1249,7 +1248,7 @@ export class LangfuseClient {
     this.traceState.generationInputsBySession.delete(sessionID);
     this.traceState.toolResultSourceMessageIdsBySession.delete(sessionID);
 
-    if (!sourceMessageID) {
+    if (sourceMessageID == null) {
       return input;
     }
 
@@ -1279,7 +1278,7 @@ export class LangfuseClient {
     });
     this.traceState.generationInputsBySession.set(input.sessionID, toolResults);
 
-    if (messageID) {
+    if (messageID != null) {
       this.traceState.toolResultSourceMessageIdsBySession.set(
         input.sessionID,
         messageID,
@@ -1294,7 +1293,6 @@ export class LangfuseClient {
 
     if (
       "data" in error &&
-      error.data &&
       typeof error.data === "object" &&
       "message" in error.data &&
       typeof error.data.message === "string"
@@ -1350,7 +1348,7 @@ function getCompletedReasoningTimestamp(part: MessagePart) {
   return undefined;
 }
 
-export type FormattedMessagePart =
+type FormattedMessagePart =
   | { type: string; text: string }
   | { type: string; filename?: string; url?: string }
   | { type: string; name?: string }
@@ -1358,14 +1356,14 @@ export type FormattedMessagePart =
   | { type: string; tool?: string; title?: string }
   | { type: string };
 
-export type SessionError = Extract<
+type SessionError = Extract<
   Parameters<NonNullable<Hooks["event"]>>[0]["event"],
   { type: "session.error" }
 >["properties"]["error"];
 
 export type SessionErrorInfo = NonNullable<SessionError>;
 
-export type UserMessageInput = {
+type UserMessageInput = {
   role: "user";
   content: FormattedMessagePart[];
   tools?: ToolDefinition[];
@@ -1418,20 +1416,20 @@ export class LangfuseClientService extends EffectContext.Tag(
 
 const makeUserIdSpanProcessor = (userId: string) =>
   ({
-    onStart: (span: Span, _parentContext: unknown) => {
+    onStart: (span: Span) => {
       span.setAttribute("langfuse.user.id", userId);
     },
-    onEnd: (_span: ReadableSpan) => {},
+    onEnd: () => undefined,
     shutdown: () => Promise.resolve(),
     forceFlush: () => Promise.resolve(),
   }) satisfies SpanProcessor;
 
 const makePluginVersionSpanProcessor = () =>
   ({
-    onStart: (span: Span, _parentContext: unknown) => {
+    onStart: (span: Span) => {
       span.setAttribute("langfuse.plugin.version", PLUGIN_VERSION);
     },
-    onEnd: (_span: ReadableSpan) => {},
+    onEnd: () => undefined,
     shutdown: () => Promise.resolve(),
     forceFlush: () => Promise.resolve(),
   }) satisfies SpanProcessor;
@@ -1439,7 +1437,7 @@ const makePluginVersionSpanProcessor = () =>
 // Langfuse's OTEL processor may auto-mark exported spans as app roots, this overrides that.
 const makeAppRootSpanProcessor = (tracerName: string) =>
   ({
-    onStart: (span: Span, _parentContext: unknown) => {
+    onStart: (span: Span) => {
       if (span.instrumentationScope.name !== tracerName) {
         return;
       }
@@ -1449,7 +1447,7 @@ const makeAppRootSpanProcessor = (tracerName: string) =>
         span.name === "opencode.turn",
       );
     },
-    onEnd: (_span: ReadableSpan) => {},
+    onEnd: () => undefined,
     shutdown: () => Promise.resolve(),
     forceFlush: () => Promise.resolve(),
   }) satisfies SpanProcessor;
@@ -1503,20 +1501,24 @@ export const createLangfuseClient = (input: {
       resource: defaultResource()
         .merge(detectResources({ detectors: [envDetector] }))
         .merge(
-          input.serviceName
+          input.serviceName != null
             ? resourceFromAttributes({ "service.name": input.serviceName })
             : null,
         ),
       spanProcessors: [
         makePluginVersionSpanProcessor(),
-        ...(input.userId ? [makeUserIdSpanProcessor(input.userId)] : []),
+        ...(input.userId != null
+          ? [makeUserIdSpanProcessor(input.userId)]
+          : []),
         processor,
         makeAppRootSpanProcessor(traceState.tracerName),
       ],
     });
     let isShutdown = false;
 
-    yield* Effect.sync(() => provider.register());
+    yield* Effect.sync(() => {
+      provider.register();
+    });
 
     return new LangfuseClient({
       baseUrl: input.baseUrl,

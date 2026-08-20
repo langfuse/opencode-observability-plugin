@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import type { IncomingHttpHeaders, Server } from "node:http";
 
 import { trace } from "@opentelemetry/api";
+import { Schema } from "effect";
 import {
   afterAll,
   afterEach,
@@ -13,37 +14,56 @@ import {
   test,
 } from "vitest";
 
-interface OtlpValue {
-  stringValue?: string;
-  boolValue?: boolean;
-  intValue?: number;
-}
+const OtlpValueSchema = Schema.Struct({
+  stringValue: Schema.optional(Schema.String),
+  boolValue: Schema.optional(Schema.Boolean),
+  intValue: Schema.optional(Schema.Number),
+});
+const OtlpAttributeSchema = Schema.Struct({
+  key: Schema.String,
+  value: OtlpValueSchema,
+});
+const OtlpSpanSchema = Schema.Struct({
+  name: Schema.String,
+  traceId: Schema.String,
+  spanId: Schema.String,
+  parentSpanId: Schema.optional(Schema.String),
+  startTimeUnixNano: Schema.String,
+  endTimeUnixNano: Schema.String,
+  attributes: Schema.Array(OtlpAttributeSchema),
+  status: Schema.optional(
+    Schema.Struct({
+      code: Schema.optional(Schema.Number),
+      message: Schema.optional(Schema.String),
+    }),
+  ),
+  events: Schema.optional(Schema.Array(Schema.Struct({ name: Schema.String }))),
+});
+const CapturedRequestBodySchema = Schema.Struct({
+  resourceSpans: Schema.Array(
+    Schema.Struct({
+      resource: Schema.optional(
+        Schema.Struct({
+          attributes: Schema.optional(Schema.Array(OtlpAttributeSchema)),
+        }),
+      ),
+      scopeSpans: Schema.Array(
+        Schema.Struct({ spans: Schema.Array(OtlpSpanSchema) }),
+      ),
+    }),
+  ),
+});
 
-interface OtlpSpan {
-  name: string;
-  traceId: string;
-  spanId: string;
-  parentSpanId?: string;
-  startTimeUnixNano: string;
-  endTimeUnixNano: string;
-  attributes: Array<{ key: string; value: OtlpValue }>;
-  status?: { code?: number; message?: string };
-  events?: Array<{ name: string }>;
-}
+type OtlpSpan = typeof OtlpSpanSchema.Type;
 
-interface CapturedRequest {
+type CapturedRequest = {
   method?: string;
   url?: string;
   headers: IncomingHttpHeaders;
-  body: {
-    resourceSpans: Array<{
-      resource?: { attributes?: Array<{ key: string; value: OtlpValue }> };
-      scopeSpans: Array<{ spans: OtlpSpan[] }>;
-    }>;
-  };
-}
+  body: typeof CapturedRequestBodySchema.Type;
+};
 
-type Plugin = (typeof import("../../dist/index.js"))["default"];
+type Plugin = (typeof import("../../src/index.js"))["default"];
 type PluginHooks = Awaited<ReturnType<Plugin>>;
 type PluginEvent = Parameters<NonNullable<PluginHooks["event"]>>[0]["event"];
 type SessionNextEvent =
@@ -127,13 +147,48 @@ type TestPluginEvent =
       };
     };
 
-const packageJson = JSON.parse(
-  readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
-) as { version?: unknown };
+const PluginEventSchema = Schema.declare(
+  (input): input is PluginEvent =>
+    typeof input === "object" &&
+    input !== null &&
+    "type" in input &&
+    "properties" in input,
+);
 
-if (typeof packageJson.version !== "string") {
-  throw new Error("Expected package.json to contain a version");
-}
+const PluginClientSchema = Schema.declare(
+  (input): input is Parameters<Plugin>[0]["client"] =>
+    typeof input === "object" &&
+    input !== null &&
+    "app" in input &&
+    "tool" in input,
+);
+
+const PluginInputSchema = Schema.declare(
+  (input): input is Parameters<Plugin>[0] =>
+    typeof input === "object" && input !== null && "client" in input,
+);
+
+const PluginModuleSchema = Schema.declare(
+  (input): input is { default: Plugin } =>
+    typeof input === "object" &&
+    input !== null &&
+    "default" in input &&
+    typeof input.default === "function",
+);
+
+const McpToolOutputSchema = Schema.declare(
+  (
+    input,
+  ): input is Parameters<NonNullable<PluginHooks["tool.execute.after"]>>[1] =>
+    typeof input === "object" &&
+    input !== null &&
+    "content" in input &&
+    Array.isArray(input.content),
+);
+
+const packageJson = Schema.decodeUnknownSync(
+  Schema.parseJson(Schema.Struct({ version: Schema.String })),
+)(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
 
 const packageVersion = packageJson.version;
 
@@ -189,7 +244,7 @@ const getJsonAttribute = (span: OtlpSpan, key: string) => {
     throw new Error(`Expected ${span.name} attribute ${key} to be JSON`);
   }
 
-  return JSON.parse(value) as unknown;
+  return Schema.decodeUnknownSync(Schema.parseJson(Schema.Unknown))(value);
 };
 
 const getSpan = (spans: OtlpSpan[], name: string) => {
@@ -222,7 +277,9 @@ const getSessionSpan = (spans: OtlpSpan[], name: string, sessionID: string) => {
 const emitEvent = async (event: TestPluginEvent) => {
   // These events are emitted by current OpenCode versions but are not yet part of
   // the PluginEvent union exported by our pinned @opencode-ai/plugin version.
-  await hooks.event?.({ event: event as PluginEvent });
+  await hooks.event?.({
+    event: Schema.decodeUnknownSync(PluginEventSchema)(event),
+  });
 };
 
 const flushSession = async (sessionID: string) => {
@@ -338,7 +395,7 @@ const completeGeneration = async (input: {
   completed: number;
   text?: string;
 }) => {
-  if (input.text) {
+  if (input.text !== undefined && input.text !== "") {
     await emitEvent({
       type: "message.part.updated",
       properties: {
@@ -381,7 +438,7 @@ const completeGeneration = async (input: {
 
 const createHooks = async (baseUrl: string) => {
   process.env.LANGFUSE_BASE_URL = baseUrl;
-  const client = {
+  const client = Schema.decodeUnknownSync(PluginClientSchema)({
     app: {
       log: () => Promise.resolve(),
     },
@@ -417,9 +474,9 @@ const createHooks = async (baseUrl: string) => {
         });
       },
     },
-  } as unknown as Parameters<Plugin>[0]["client"];
+  });
 
-  return plugin({ client } as Parameters<Plugin>[0]);
+  return plugin(Schema.decodeUnknownSync(PluginInputSchema)({ client }));
 };
 
 const disposeHooks = async () => {
@@ -439,17 +496,21 @@ beforeAll(async () => {
   server = createServer((request, response) => {
     const chunks: Buffer[] = [];
 
-    request.on("error", (error) => collectorErrors.push(error));
-    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("error", (error) => {
+      collectorErrors.push(error);
+    });
+    request.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+    });
     request.on("end", () => {
       try {
         requests.push({
           method: request.method,
           url: request.url,
           headers: request.headers,
-          body: JSON.parse(
-            Buffer.concat(chunks).toString("utf8"),
-          ) as CapturedRequest["body"],
+          body: Schema.decodeUnknownSync(
+            Schema.parseJson(CapturedRequestBodySchema),
+          )(Buffer.concat(chunks).toString("utf8")),
         });
         response.writeHead(collectorStatus, {
           "content-type": "application/json",
@@ -465,23 +526,27 @@ beforeAll(async () => {
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve());
+    server.listen(0, "127.0.0.1", () => {
+      resolve();
+    });
   });
 
   const address = server.address();
-  if (!address || typeof address === "string") {
+  if (address === null || typeof address === "string") {
     throw new Error("Expected the test collector to listen on a TCP port");
   }
 
   process.env.LANGFUSE_PUBLIC_KEY = "pk-test";
   process.env.LANGFUSE_SECRET_KEY = "sk-test";
-  collectorBaseUrl = `http://127.0.0.1:${address.port}`;
+  collectorBaseUrl = `http://127.0.0.1:${address.port.toString()}`;
   process.env.LANGFUSE_BASE_URL = collectorBaseUrl;
   process.env.LANGFUSE_ENVIRONMENT = "integration-test";
   process.env.LANGFUSE_USER_ID = "test-user";
   delete process.env.LANGFUSE_BASEURL;
 
-  ({ default: plugin } = await import("../../dist/index.js"));
+  const builtPluginUrl = new URL("../../dist/index.js", import.meta.url);
+  const builtPlugin: unknown = await import(builtPluginUrl.href);
+  plugin = Schema.decodeUnknownSync(PluginModuleSchema)(builtPlugin).default;
 });
 
 beforeEach(async () => {
@@ -500,9 +565,15 @@ afterEach(async () => {
 
 afterAll(async () => {
   try {
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    );
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      });
+    });
   } finally {
     for (const [name, value] of Object.entries({
       LANGFUSE_PUBLIC_KEY: originalEnvironment.publicKey,
@@ -513,7 +584,7 @@ afterAll(async () => {
       LANGFUSE_USER_ID: originalEnvironment.userId,
     })) {
       if (value === undefined) {
-        delete process.env[name];
+        Reflect.deleteProperty(process.env, name);
       } else {
         process.env[name] = value;
       }
@@ -521,7 +592,7 @@ afterAll(async () => {
   }
 });
 
-describe.sequential("built plugin", () => {
+describe("built plugin", { concurrent: false }, () => {
   test("exports a complete multi-turn OpenCode session", async () => {
     const sessionID = "happy-session";
     const started = startedAt;
@@ -597,12 +668,15 @@ describe.sequential("built plugin", () => {
       (span) =>
         span.name === "opencode.turn" || span.name === "opencode.message.user",
     )) {
-      expect(getJsonAttribute(span, "langfuse.observation.input")).toEqual([
-        {
-          role: "user",
-          content: expect.any(Array),
-        },
-      ]);
+      const input = Schema.decodeUnknownSync(
+        Schema.Array(
+          Schema.Struct({
+            role: Schema.Literal("user"),
+            content: Schema.Array(Schema.Unknown),
+          }),
+        ),
+      )(getJsonAttribute(span, "langfuse.observation.input"));
+      expect(input).toHaveLength(1);
     }
     for (const turn of spans.filter((span) => span.name === "opencode.turn")) {
       expect(getAttributes(turn)).toMatchObject({
@@ -767,7 +841,7 @@ describe.sequential("built plugin", () => {
         tool: "mcp_test_tool",
         args: { query: "test" },
       },
-      {
+      Schema.decodeUnknownSync(McpToolOutputSchema)({
         content: [
           { type: "text", text: "MCP tool result" },
           {
@@ -779,9 +853,7 @@ describe.sequential("built plugin", () => {
           },
           { type: "image", mimeType: "image/png", data: "aW1hZ2U=" },
         ],
-      } as unknown as Parameters<
-        NonNullable<PluginHooks["tool.execute.after"]>
-      >[1],
+      }),
     );
     const failedMcpCallID = "nested-observations-failed-mcp-call";
     await hooks["tool.execute.before"]?.(
@@ -795,12 +867,10 @@ describe.sequential("built plugin", () => {
         tool: "mcp_failing_tool",
         args: { query: "fail" },
       },
-      {
+      Schema.decodeUnknownSync(McpToolOutputSchema)({
         content: [{ type: "text", text: "MCP tool failed" }],
         isError: true,
-      } as unknown as Parameters<
-        NonNullable<PluginHooks["tool.execute.after"]>
-      >[1],
+      }),
     );
     await emitEvent({
       type: "message.part.updated",
@@ -1088,10 +1158,10 @@ describe.sequential("built plugin", () => {
     const userMessageID = "out-of-order-tool-parenting-user";
     const started = startedAt;
     const generations = [1, 2, 3].map((index) => ({
-      assistantMessageID: `out-of-order-tool-parenting-assistant-${index}`,
-      stepID: `out-of-order-tool-parenting-step-${index}`,
-      tool: `out-of-order-tool-${index}`,
-      callID: `out-of-order-tool-parenting-call-${index}`,
+      assistantMessageID: `out-of-order-tool-parenting-assistant-${index.toString()}`,
+      stepID: `out-of-order-tool-parenting-step-${index.toString()}`,
+      tool: `out-of-order-tool-${index.toString()}`,
+      callID: `out-of-order-tool-parenting-call-${index.toString()}`,
     }));
 
     const executeTool = async (generation: (typeof generations)[number]) => {
@@ -1214,8 +1284,12 @@ describe.sequential("built plugin", () => {
         );
       });
 
-      expect(span).toBeDefined();
-      return span!;
+      if (!span) {
+        throw new Error(
+          `Expected generation for ${generation.assistantMessageID}`,
+        );
+      }
+      return span;
     });
     const toolSpans = generations.map((generation) =>
       getSpan(spans, generation.tool),
@@ -1362,12 +1436,16 @@ describe.sequential("built plugin", () => {
       });
     const firstGeneration = findGeneration(firstAssistantMessageID);
     const secondGeneration = findGeneration(secondAssistantMessageID);
-    expect(firstGeneration).toBeDefined();
-    expect(secondGeneration).toBeDefined();
+    if (!firstGeneration) {
+      throw new Error("Expected the first generation");
+    }
+    if (!secondGeneration) {
+      throw new Error("Expected the second generation");
+    }
 
     const toolSpans = spans.filter((span) => span.name === "bash");
     expect(toolSpans).toHaveLength(1);
-    expect(toolSpans[0].parentSpanId).toBe(firstGeneration!.spanId);
+    expect(toolSpans[0].parentSpanId).toBe(firstGeneration.spanId);
     expect(toolSpans[0].startTimeUnixNano).toBe(
       (BigInt(toolStarted) * 1_000_000n).toString(),
     );
@@ -1384,7 +1462,7 @@ describe.sequential("built plugin", () => {
       output: "07f9a68 Fix tool observation parenting",
     });
     expect(
-      getJsonAttribute(secondGeneration!, "langfuse.observation.input"),
+      getJsonAttribute(secondGeneration, "langfuse.observation.input"),
     ).toEqual([
       {
         role: "assistant",
@@ -1615,7 +1693,7 @@ describe.sequential("built plugin", () => {
 
     const spanIds = new Set(spans.map((span) => span.spanId));
     for (const span of spans) {
-      if (span.parentSpanId) {
+      if (span.parentSpanId !== undefined && span.parentSpanId !== "") {
         expect(spanIds.has(span.parentSpanId)).toBe(true);
       }
     }
@@ -1653,21 +1731,29 @@ describe.sequential("built plugin", () => {
       cache_write: 1,
       total: 17,
     });
-    expect(getJsonAttribute(generation, "langfuse.observation.output")).toEqual(
-      [
-        expect.objectContaining({
-          role: "assistant",
-          content: expect.stringContaining("Recovered answer"),
-          tool_calls: [
-            {
-              id: "stream-error-retry-call-1",
-              name: "bash",
-              arguments: JSON.stringify({ command: "echo retry" }),
-            },
-          ],
+    const output = Schema.decodeUnknownSync(
+      Schema.Array(
+        Schema.Struct({
+          role: Schema.Literal("assistant"),
+          content: Schema.String,
+          tool_calls: Schema.Array(
+            Schema.Struct({
+              id: Schema.String,
+              name: Schema.String,
+              arguments: Schema.String,
+            }),
+          ),
         }),
-      ],
-    );
+      ),
+    )(getJsonAttribute(generation, "langfuse.observation.output"));
+    expect(output[0].content).toContain("Recovered answer");
+    expect(output[0].tool_calls).toEqual([
+      {
+        id: "stream-error-retry-call-1",
+        name: "bash",
+        arguments: JSON.stringify({ command: "echo retry" }),
+      },
+    ]);
 
     expect(getSpan(spans, "bash").parentSpanId).toBe(generation.spanId);
     expect(getSpan(spans, "grep").parentSpanId).toBe(generation.spanId);
@@ -1734,21 +1820,31 @@ describe.sequential("built plugin", () => {
 
     const retry = await flushSession(retrySessionID);
     expect(toolListCalls).toBe(2);
-    expect(
+    const input = Schema.decodeUnknownSync(
+      Schema.Array(
+        Schema.Struct({
+          role: Schema.Literal("user"),
+          content: Schema.Array(
+            Schema.Struct({
+              type: Schema.Literal("text"),
+              text: Schema.String,
+            }),
+          ),
+          tools: Schema.Array(Schema.Struct({ name: Schema.String })),
+        }),
+      ),
+    )(
       getJsonAttribute(
         getSpan(retry.spans, "opencode.generation"),
         "langfuse.observation.input",
       ),
-    ).toEqual([
-      {
-        role: "user",
-        content: [{ type: "text", text: "Retry tool discovery" }],
-        tools: expect.arrayContaining([
-          expect.objectContaining({ name: "read" }),
-          expect.objectContaining({ name: "webfetch" }),
-        ]),
-      },
+    );
+    expect(input[0].content).toEqual([
+      { type: "text", text: "Retry tool discovery" },
     ]);
+    expect(input[0].tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(["read", "webfetch"]),
+    );
   });
 
   test("preserves step metadata when the assistant message arrives later", async () => {
@@ -2028,17 +2124,19 @@ describe.sequential("built plugin", () => {
       process.env.OTEL_EXPORTER_OTLP_TRACES_TIMEOUT;
     process.env.OTEL_EXPORTER_OTLP_TRACES_TIMEOUT = "100";
     const unavailableServer = createServer();
-    unavailableServer.on("connection", (socket) => socket.destroy());
+    unavailableServer.on("connection", (socket) => {
+      socket.destroy();
+    });
     await new Promise<void>((resolve, reject) => {
       unavailableServer.once("error", reject);
       unavailableServer.listen(0, "127.0.0.1", resolve);
     });
     const address = unavailableServer.address();
-    if (!address || typeof address === "string") {
+    if (address === null || typeof address === "string") {
       throw new Error("Expected the unavailable collector to use a TCP port");
     }
     hooksDisposed = false;
-    hooks = await createHooks(`http://127.0.0.1:${address.port}`);
+    hooks = await createHooks(`http://127.0.0.1:${address.port.toString()}`);
     try {
       await sendUserMessage({
         sessionID: "unreachable-collector-session",
@@ -2057,11 +2155,15 @@ describe.sequential("built plugin", () => {
     } finally {
       try {
         await disposeHooks();
-        await new Promise<void>((resolve, reject) =>
-          unavailableServer.close((error) =>
-            error ? reject(error) : resolve(),
-          ),
-        );
+        await new Promise<void>((resolve, reject) => {
+          unavailableServer.close((error) => {
+            if (error) {
+              reject(error);
+            } else {
+              resolve();
+            }
+          });
+        });
       } finally {
         if (originalExporterTimeout === undefined) {
           delete process.env.OTEL_EXPORTER_OTLP_TRACES_TIMEOUT;
@@ -2134,7 +2236,7 @@ describe.sequential("built plugin", () => {
     } finally {
       for (const [name, value] of Object.entries(originalValues)) {
         if (value === undefined) {
-          delete process.env[name];
+          Reflect.deleteProperty(process.env, name);
         } else {
           process.env[name] = value;
         }

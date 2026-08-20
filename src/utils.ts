@@ -6,7 +6,7 @@ export const log = (level: "info" | "warn" | "error", message: string) =>
   Effect.gen(function* () {
     const opencode = yield* OpencodeClientService;
 
-    yield* Effect.sync(() =>
+    yield* Effect.tryPromise(() =>
       opencode.app.log({
         body: { service: "langfuse", level, message },
       }),

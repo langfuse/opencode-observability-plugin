@@ -40,22 +40,28 @@
     "build": "tsdown && tsc --emitDeclarationOnly",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "knip": "knip --strict --treat-config-hints-as-errors --treat-tag-hints-as-errors",
+    "lint": "eslint .",
     "test:integration": "pnpm run build && tsc --noEmit -p tsconfig.test.json && vitest run test/integration"
   },
   "dependencies": {
+    "@langfuse/otel": "^5.10.1",
     "@opencode-ai/plugin": "^1.15.13",
-    "@opentelemetry/api": "^1.9.1"
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/resources": "^2.10.0",
+    "@opentelemetry/sdk-trace-base": "^2.10.0",
+    "@opentelemetry/sdk-trace-node": "^2.10.0",
+    "effect": "^3.22.1"
   },
   "devDependencies": {
-    "@langfuse/otel": "^5.4.1",
-    "@opentelemetry/resources": "^2.7.1",
-    "@opentelemetry/sdk-trace-base": "^2.7.1",
-    "@opentelemetry/sdk-trace-node": "^2.7.1",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^26.1.2",
-    "effect": "^3.21.2",
+    "eslint": "^10.8.1",
+    "knip": "^6.32.2",
     "prettier": "^3.8.3",
     "tsdown": "0.22.14",
     "typescript": "^6.0.3",
+    "typescript-eslint": "^8.67.0",
     "vitest": "4.1.6"
   }
 }

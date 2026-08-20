@@ -114,7 +114,12 @@ const loadLangfuseCredentials = Effect.gen(function* () {
   const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
   const secretKey = process.env.LANGFUSE_SECRET_KEY;
 
-  if (publicKey && secretKey) {
+  if (
+    publicKey !== undefined &&
+    publicKey !== "" &&
+    secretKey !== undefined &&
+    secretKey !== ""
+  ) {
     return {
       publicKey,
       secretKey,
@@ -134,12 +139,12 @@ const loadLangfuseCredentials = Effect.gen(function* () {
   );
 
   const credentials = yield* Effect.tryPromise({
-    try: async () => JSON.parse(await readFile(configPath, "utf8")),
+    try: async () =>
+      Schema.decodeUnknownSync(Schema.parseJson(LangfuseCredentialsSchema))(
+        await readFile(configPath, "utf8"),
+      ),
     catch: () => new MissingLangfuseCredentials(),
-  }).pipe(
-    Effect.flatMap(Schema.decodeUnknown(LangfuseCredentialsSchema)),
-    Effect.mapError(() => new MissingLangfuseCredentials()),
-  );
+  }).pipe(Effect.mapError(() => new MissingLangfuseCredentials()));
 
   if (!credentials.publicKey || !credentials.secretKey) {
     return yield* Effect.fail(new MissingLangfuseCredentials());
@@ -157,7 +162,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
       langfuse.endActiveGenerationSteps(sessionID);
       langfuse.endActiveTurnObservations(sessionID);
 
-      if (sessionID) {
+      if (sessionID !== undefined && sessionID !== "") {
         langfuse.clearSessionTraceState(sessionID);
       } else {
         langfuse.clearTraceState();
@@ -195,7 +200,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
       });
     }
 
-    if (event.type === "session.error" && event.properties.sessionID) {
+    if (event.type === "session.error" && event.properties.sessionID != null) {
       langfuse.traceSessionError({
         sessionID: event.properties.sessionID,
         error: event.properties.error,
@@ -270,7 +275,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
 
     if (
       event.type === "session.next.tool.called" &&
-      event.properties.assistantMessageID
+      event.properties.assistantMessageID != null
     ) {
       langfuse.rememberToolCall({
         callID: event.properties.callID,
@@ -335,7 +340,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
         started: message.time.created,
       });
 
-      if (!message.time.completed) {
+      if (message.time.completed === undefined) {
         return;
       }
 
@@ -426,7 +431,9 @@ const flattenMcpContent = (content: readonly unknown[]) => {
 
   for (const part of content) {
     const decoded = Schema.decodeUnknownOption(McpContentSchema)(part);
-    if (Option.isNone(decoded)) continue;
+    if (Option.isNone(decoded)) {
+      continue;
+    }
 
     if (decoded.value.type === "text") {
       textParts.push(decoded.value.text);
@@ -474,11 +481,7 @@ const createShutdownOnce = (langfuse: LangfuseClient) => {
   let shutdownPromise: Promise<void> | undefined;
 
   return () => {
-    if (!shutdownPromise) {
-      shutdownPromise = Effect.runPromise(langfuse.shutdown);
-    }
-
-    return shutdownPromise;
+    return (shutdownPromise ??= Effect.runPromise(langfuse.shutdown));
   };
 };
 
@@ -585,7 +588,7 @@ const main = Effect.gen(function* () {
       runHook(
         "config",
         Effect.gen(function* () {
-          if (!config.experimental?.openTelemetry) {
+          if (config.experimental?.openTelemetry !== true) {
             yield* log(
               "warn",
               "[Tracing disabled] Please enable `experimental.openTelemetry` in your opencode.jsonc to use the Langfuse plugin",
@@ -644,7 +647,7 @@ const main = Effect.gen(function* () {
             tools = yield* Effect.promise(() => pendingTools);
           }
 
-          yield* Effect.sync(() =>
+          yield* Effect.sync(() => {
             langfuse.traceUserMessage({
               sessionID: input.sessionID,
               messageID: input.messageID,
@@ -652,8 +655,8 @@ const main = Effect.gen(function* () {
               model: input.model,
               parts: output.parts,
               tools,
-            }),
-          );
+            });
+          });
         }),
       ),
 
@@ -661,13 +664,14 @@ const main = Effect.gen(function* () {
       runHook(
         "tool.execute.before",
         Effect.try({
-          try: () =>
+          try: () => {
             langfuse.traceToolStart({
               sessionID: input.sessionID,
               callID: input.callID,
               tool: input.tool,
               args: output.args,
-            }),
+            });
+          },
           catch: (error) => error,
         }),
       ),
@@ -686,7 +690,7 @@ const main = Effect.gen(function* () {
           }
 
           if (normalized.isError) {
-            yield* Effect.sync(() =>
+            yield* Effect.sync(() => {
               langfuse.traceToolError({
                 sessionID: input.sessionID,
                 callID: input.callID,
@@ -696,13 +700,13 @@ const main = Effect.gen(function* () {
                   normalized.output ||
                   `MCP tool "${input.tool}" returned an error`,
                 completed: Date.now(),
-              }),
-            );
+              });
+            });
             return;
           }
 
           yield* Effect.try({
-            try: () =>
+            try: () => {
               langfuse.traceToolEnd({
                 sessionID: input.sessionID,
                 callID: input.callID,
@@ -710,7 +714,8 @@ const main = Effect.gen(function* () {
                 args: input.args,
                 title: normalized.title,
                 output: normalized.output,
-              }),
+              });
+            },
             catch: (error) => error,
           });
         }),
@@ -720,7 +725,7 @@ const main = Effect.gen(function* () {
   return hooks;
 });
 
-export const LangfusePlugin: Plugin = async ({ client }) => {
+const LangfusePlugin: Plugin = async ({ client }) => {
   const clientLayer = Layer.succeed(OpencodeClientService, client);
 
   return Effect.runPromise(main.pipe(Effect.provide(clientLayer)));

@@ -165,7 +165,7 @@ export class LangfuseClient {
 
     for (const [messageID, step] of this.traceState
       .activeGenerationStepsByMessageId) {
-      if (!(sessionID ?? "") || step.sessionID === sessionID) {
+      if (!(sessionID != null) || step.sessionID === sessionID) {
         this.traceState.activeGenerationStepsByMessageId.delete(messageID);
       }
     }

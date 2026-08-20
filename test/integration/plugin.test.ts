@@ -567,8 +567,11 @@ afterAll(async () => {
   try {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => {
-        // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- Existing violation tracked for incremental cleanup.
-        error ? reject(error) : resolve();
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
       });
     });
   } finally {

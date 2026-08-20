@@ -161,8 +161,7 @@ export class LangfuseClient {
 
     for (const [messageID, step] of this.traceState
       .activeGenerationStepsByMessageId) {
-      // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
-      if (!(sessionID != null) || step.sessionID === sessionID) {
+      if (sessionID == null || step.sessionID === sessionID) {
         this.traceState.activeGenerationStepsByMessageId.delete(messageID);
       }
     }

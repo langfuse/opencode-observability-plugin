@@ -1299,8 +1299,6 @@ export class LangfuseClient {
 
     if (
       "data" in error &&
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/strict-boolean-expressions -- Existing violations; fix separately.
-      error.data &&
       typeof error.data === "object" &&
       "message" in error.data &&
       typeof error.data.message === "string"

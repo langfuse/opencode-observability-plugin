@@ -196,8 +196,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
       });
     }
 
-    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-    if (event.type === "session.error" && event.properties.sessionID) {
+    if (event.type === "session.error" && (event.properties.sessionID ?? "")) {
       langfuse.traceSessionError({
         sessionID: event.properties.sessionID,
         error: event.properties.error,

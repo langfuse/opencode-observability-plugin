@@ -1436,13 +1436,14 @@ describe("built plugin", { concurrent: false }, () => {
       });
     const firstGeneration = findGeneration(firstAssistantMessageID);
     const secondGeneration = findGeneration(secondAssistantMessageID);
-    expect(firstGeneration).toBeDefined();
+    if (!firstGeneration) {
+      throw new Error("Expected the first generation");
+    }
     expect(secondGeneration).toBeDefined();
 
     const toolSpans = spans.filter((span) => span.name === "bash");
     expect(toolSpans).toHaveLength(1);
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- Existing violation tracked for incremental cleanup.
-    expect(toolSpans[0].parentSpanId).toBe(firstGeneration!.spanId);
+    expect(toolSpans[0].parentSpanId).toBe(firstGeneration.spanId);
     expect(toolSpans[0].startTimeUnixNano).toBe(
       (BigInt(toolStarted) * 1_000_000n).toString(),
     );

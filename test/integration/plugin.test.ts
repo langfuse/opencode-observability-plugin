@@ -14,7 +14,12 @@ import {
   test,
 } from "vitest";
 
-import type { SessionNextEvent } from "../../src/schema.js";
+import type { OpencodeEvent } from "../../src/schema.js";
+
+type SessionNextEvent = Extract<
+  OpencodeEvent,
+  { type: `session.next.${string}` }
+>;
 
 const OtlpValueSchema = Schema.Struct({
   stringValue: Schema.optional(Schema.String),
@@ -276,7 +281,8 @@ const startGeneration = async (input: {
     properties: {
       sessionID: input.sessionID,
       timestamp: input.started,
-      ...(input.assistantMessageID
+      ...(input.assistantMessageID !== undefined &&
+      input.assistantMessageID !== ""
         ? { assistantMessageID: input.assistantMessageID }
         : {}),
       agent: "build",

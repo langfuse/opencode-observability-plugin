@@ -1228,7 +1228,7 @@ describe.sequential("built plugin", () => {
       });
 
       expect(span).toBeDefined();
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- Existing violation; fix separately.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- Existing violation tracked for incremental cleanup.
       return span!;
     });
     const toolSpans = generations.map((generation) =>

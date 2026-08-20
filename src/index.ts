@@ -180,7 +180,10 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
     if (event.type === "session.next.step.started") {
       langfuse.startActiveGenerationStep({
         sessionID: event.properties.sessionID,
-        assistantMessageID: event.properties.assistantMessageID,
+        assistantMessageID:
+          "assistantMessageID" in event.properties
+            ? event.properties.assistantMessageID
+            : undefined,
         agent: event.properties.agent,
         model: event.properties.model,
         started: event.properties.timestamp,
@@ -192,7 +195,10 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
       langfuse.traceFailedGenerationStep({
         id: event.id,
         sessionID: event.properties.sessionID,
-        assistantMessageID: event.properties.assistantMessageID,
+        assistantMessageID:
+          "assistantMessageID" in event.properties
+            ? event.properties.assistantMessageID
+            : undefined,
         completed: event.properties.timestamp,
         error: event.properties.error,
       });
@@ -200,7 +206,7 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
 
     if (
       event.type === "session.next.tool.called" &&
-      event.properties.assistantMessageID != null
+      "assistantMessageID" in event.properties
     ) {
       langfuse.rememberToolCall({
         callID: event.properties.callID,
@@ -224,7 +230,10 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
       });
     }
 
-    if (event.type === "session.next.reasoning.ended") {
+    if (
+      event.type === "session.next.reasoning.ended" &&
+      "assistantMessageID" in event.properties
+    ) {
       langfuse.rememberReasoning({
         reasoningID: event.properties.reasoningID,
         sessionID: event.properties.sessionID,
@@ -235,15 +244,22 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
     }
 
     if (event.type === "session.next.compaction.ended") {
+      const metadata =
+        "messageID" in event.properties
+          ? {
+              messageID: event.properties.messageID,
+              reason: event.properties.reason,
+              recent: event.properties.recent,
+            }
+          : { include: event.properties.include };
+
       langfuse.traceEvent({
         id: event.id,
         sessionID: event.properties.sessionID,
         name: "opencode.generation.compaction",
         timestamp: event.properties.timestamp,
         output: { text: event.properties.text },
-        metadata: {
-          include: event.properties.include,
-        },
+        metadata,
       });
     }
 

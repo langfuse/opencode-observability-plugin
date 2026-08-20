@@ -17,6 +17,16 @@ Enable the plugin in your `opencode.json` or `opencode.jsonc`:
 
 Restart OpenCode after changing the config.
 
+## Supported Versions
+
+We aim to support a wide range of OpenCode v1 versions, including older event
+payloads that are no longer part of the current OpenCode internals.
+
+Validated versions:
+
+- `1.15.13`
+- `1.18.19`
+
 ## Langfuse Credentials
 
 Create `~/.config/opencode/opencode-langfuse.json` with your Langfuse credentials.

@@ -14,6 +14,8 @@ import {
   test,
 } from "vitest";
 
+import type { SessionNextEvent } from "../../src/schema.js";
+
 const OtlpValueSchema = Schema.Struct({
   stringValue: Schema.optional(Schema.String),
   boolValue: Schema.optional(Schema.Boolean),
@@ -66,76 +68,6 @@ type CapturedRequest = {
 type Plugin = (typeof import("../../src/index.js"))["default"];
 type PluginHooks = Awaited<ReturnType<Plugin>>;
 type PluginEvent = Parameters<NonNullable<PluginHooks["event"]>>[0]["event"];
-type SessionNextEvent =
-  | {
-      id: string;
-      type: "session.next.step.started";
-      properties: {
-        sessionID: string;
-        timestamp: number;
-        assistantMessageID?: string;
-        agent: string;
-        model: {
-          id: string;
-          providerID: string;
-          variant?: string;
-        };
-        snapshot?: string;
-      };
-    }
-  | {
-      id: string;
-      type: "session.next.step.failed";
-      properties: {
-        sessionID: string;
-        timestamp: number;
-        error: { message: string };
-      };
-    }
-  | {
-      id: string;
-      type: "session.next.tool.called";
-      properties: {
-        sessionID: string;
-        timestamp: number;
-        assistantMessageID?: string;
-        callID: string;
-        tool: string;
-        input: Record<string, unknown>;
-        provider: { executed: boolean; metadata?: unknown };
-      };
-    }
-  | {
-      id: string;
-      type: "session.next.retried";
-      properties: {
-        sessionID: string;
-        timestamp: number;
-        attempt: number;
-        error: unknown;
-      };
-    }
-  | {
-      id: string;
-      type: "session.next.reasoning.ended";
-      properties: {
-        sessionID: string;
-        timestamp: number;
-        assistantMessageID: string;
-        reasoningID: string;
-        text: string;
-      };
-    }
-  | {
-      id: string;
-      type: "session.next.compaction.ended";
-      properties: {
-        sessionID: string;
-        timestamp: number;
-        text: string;
-        include?: string;
-      };
-    };
 type TestPluginEvent =
   | PluginEvent
   | SessionNextEvent
@@ -344,7 +276,9 @@ const startGeneration = async (input: {
     properties: {
       sessionID: input.sessionID,
       timestamp: input.started,
-      assistantMessageID: input.assistantMessageID,
+      ...(input.assistantMessageID
+        ? { assistantMessageID: input.assistantMessageID }
+        : {}),
       agent: "build",
       model: {
         id: "test-model",
@@ -930,7 +864,7 @@ describe("built plugin", { concurrent: false }, () => {
         sessionID,
         timestamp: started + 300,
         attempt: 2,
-        error: { message: "temporary failure" },
+        error: { message: "temporary failure", isRetryable: true },
       },
     });
     await completeGeneration({
@@ -947,8 +881,10 @@ describe("built plugin", { concurrent: false }, () => {
       properties: {
         sessionID,
         timestamp: started + 900,
+        messageID: "nested-observations-compaction-message",
+        reason: "auto",
         text: "Repository context",
-        include: "README.md",
+        recent: "README.md",
       },
     });
 
@@ -1050,11 +986,153 @@ describe("built plugin", { concurrent: false }, () => {
         text: "Repository context",
       },
     );
+    expect(
+      getJsonAttribute(compaction, "langfuse.observation.metadata"),
+    ).toEqual({
+      messageID: "nested-observations-compaction-message",
+      reason: "auto",
+      recent: "README.md",
+    });
     expect(compaction.parentSpanId).toBe(generation.spanId);
 
     expect(
       spans.filter((span) => span.name === "opencode.generation.reasoning"),
     ).toHaveLength(0);
+  });
+
+  // https://github.com/anomalyco/opencode/blob/v1.15.13/packages/core/src/session-event.ts#L353-L362
+  test("supports OpenCode >=1.15.13 <1.16 compaction events", async () => {
+    const sessionID = "legacy-compaction-session";
+    const userMessageID = "legacy-compaction-user";
+
+    await sendUserMessage({
+      sessionID,
+      messageID: userMessageID,
+      text: "Compact this session",
+      started: startedAt,
+    });
+    await startGeneration({
+      id: "legacy-compaction-step",
+      sessionID,
+      started: startedAt + 100,
+    });
+    await emitEvent({
+      id: "legacy-compaction-event",
+      type: "session.next.compaction.ended",
+      properties: {
+        sessionID,
+        timestamp: startedAt + 200,
+        text: "Legacy context",
+        include: "README.md",
+      },
+    });
+
+    const { spans } = await flushSession(sessionID);
+    const compaction = getSpan(spans, "opencode.generation.compaction");
+
+    expect(
+      getJsonAttribute(compaction, "langfuse.observation.metadata"),
+    ).toEqual({ include: "README.md" });
+  });
+
+  test("supports OpenCode 1.15.13 events without assistant message IDs", async () => {
+    const sessionID = "legacy-observations-session";
+    const userMessageID = "legacy-observations-user";
+    const assistantMessageID = "legacy-observations-assistant";
+
+    await sendUserMessage({
+      sessionID,
+      messageID: userMessageID,
+      text: "Inspect the legacy session",
+      started: startedAt,
+    });
+    await startGeneration({
+      id: "legacy-observations-step",
+      sessionID,
+      started: startedAt + 100,
+    });
+    await emitEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "legacy-observations-reasoning-part",
+          sessionID,
+          messageID: assistantMessageID,
+          type: "reasoning",
+          text: "Legacy reasoning",
+          time: { start: startedAt + 150, end: startedAt + 200 },
+        },
+      },
+    });
+    await emitEvent({
+      id: "legacy-observations-reasoning-event",
+      type: "session.next.reasoning.ended",
+      properties: {
+        sessionID,
+        timestamp: startedAt + 200,
+        reasoningID: "legacy-observations-reasoning",
+        text: "Legacy reasoning",
+      },
+    });
+    await emitEvent({
+      id: "legacy-observations-tool-event",
+      type: "session.next.tool.called",
+      properties: {
+        sessionID,
+        timestamp: startedAt + 250,
+        callID: "legacy-observations-tool-call",
+        tool: "read",
+        input: { path: "README.md" },
+        provider: { executed: false },
+      },
+    });
+    await emitEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "legacy-observations-tool-part",
+          sessionID,
+          messageID: assistantMessageID,
+          type: "tool",
+          callID: "legacy-observations-tool-call",
+          tool: "read",
+          state: {
+            status: "completed",
+            input: { path: "README.md" },
+            title: "README.md",
+            output: "# Legacy project",
+            metadata: {},
+            time: { start: startedAt + 250, end: startedAt + 300 },
+          },
+        },
+      },
+    });
+    await completeGeneration({
+      sessionID,
+      userMessageID,
+      assistantMessageID,
+      started: startedAt + 100,
+      completed: startedAt + 400,
+    });
+
+    const { spans } = await flushSession(sessionID);
+    const generation = getSpan(spans, "opencode.generation");
+
+    expect(getJsonAttribute(generation, "langfuse.observation.output")).toEqual(
+      [
+        {
+          role: "assistant",
+          thinking: [{ type: "thinking", content: "Legacy reasoning" }],
+          tool_calls: [
+            {
+              id: "legacy-observations-tool-call",
+              name: "read",
+              arguments: JSON.stringify({ path: "README.md" }),
+            },
+          ],
+        },
+      ],
+    );
   });
 
   test("links child agent sessions to the parent trace", async () => {
@@ -1907,7 +1985,7 @@ describe("built plugin", { concurrent: false }, () => {
       properties: {
         sessionID,
         timestamp: started + 500,
-        error: { message: "Model unavailable" },
+        error: { type: "unknown", message: "Model unavailable" },
       },
     });
 
@@ -1920,7 +1998,7 @@ describe("built plugin", { concurrent: false }, () => {
     });
     expect(getJsonAttribute(generation, "langfuse.observation.output")).toEqual(
       {
-        error: { message: "Model unavailable" },
+        error: { type: "unknown", message: "Model unavailable" },
       },
     );
     expect(generation.events).toEqual(
@@ -2034,7 +2112,7 @@ describe("built plugin", { concurrent: false }, () => {
         sessionID,
         timestamp: started + 200,
         attempt: 2,
-        error: { message: "temporary failure" },
+        error: { message: "temporary failure", isRetryable: true },
       },
     } satisfies SessionNextEvent;
     await emitEvent(retryEvent);

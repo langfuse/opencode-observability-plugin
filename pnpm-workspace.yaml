@@ -4,3 +4,7 @@ packages:
 allowBuilds:
   msgpackr-extract: true
   protobufjs: true
+
+minimumReleaseAgeExclude:
+  - "@opencode-ai/plugin@1.18.19"
+  - "@opencode-ai/sdk@1.18.19"

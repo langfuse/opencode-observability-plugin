@@ -338,8 +338,7 @@ const completeGeneration = async (input: {
   completed: number;
   text?: string;
 }) => {
-  // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-  if (input.text) {
+  if (input.text ?? "") {
     await emitEvent({
       type: "message.part.updated",
       properties: {

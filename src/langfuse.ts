@@ -106,8 +106,7 @@ export class LangfuseClient {
   endActiveToolObservations(sessionID?: string, error?: SessionErrorInfo) {
     for (const [callID, observation] of this.traceState
       .activeToolObservations) {
-      // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
-      if (Boolean(sessionID) && observation.sessionID !== sessionID) {
+      if (sessionID != null && observation.sessionID !== sessionID) {
         continue;
       }
 

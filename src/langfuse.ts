@@ -1210,8 +1210,7 @@ export class LangfuseClient {
     const thinking = parts
       .filter(
         (part): part is Extract<MessagePart, { type: "reasoning" }> =>
-          // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
-          part.type === "reasoning" && Boolean(part.text),
+          part.type === "reasoning" && part.text !== "",
       )
       .map((part) => ({ type: "thinking" as const, content: part.text }));
     const toolCallsById = new Map(

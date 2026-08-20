@@ -2136,8 +2136,7 @@ describe("built plugin", { concurrent: false }, () => {
       throw new Error("Expected the unavailable collector to use a TCP port");
     }
     hooksDisposed = false;
-    // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- Existing violation tracked for incremental cleanup.
-    hooks = await createHooks(`http://127.0.0.1:${address.port}`);
+    hooks = await createHooks(`http://127.0.0.1:${address.port.toString()}`);
     try {
       await sendUserMessage({
         sessionID: "unreachable-collector-session",

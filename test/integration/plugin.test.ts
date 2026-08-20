@@ -1820,22 +1820,31 @@ describe("built plugin", { concurrent: false }, () => {
 
     const retry = await flushSession(retrySessionID);
     expect(toolListCalls).toBe(2);
-    expect(
+    const input = Schema.decodeUnknownSync(
+      Schema.Array(
+        Schema.Struct({
+          role: Schema.Literal("user"),
+          content: Schema.Array(
+            Schema.Struct({
+              type: Schema.Literal("text"),
+              text: Schema.String,
+            }),
+          ),
+          tools: Schema.Array(Schema.Struct({ name: Schema.String })),
+        }),
+      ),
+    )(
       getJsonAttribute(
         getSpan(retry.spans, "opencode.generation"),
         "langfuse.observation.input",
       ),
-    ).toEqual([
-      {
-        role: "user",
-        content: [{ type: "text", text: "Retry tool discovery" }],
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Existing violation tracked for incremental cleanup.
-        tools: expect.arrayContaining([
-          expect.objectContaining({ name: "read" }),
-          expect.objectContaining({ name: "webfetch" }),
-        ]),
-      },
+    );
+    expect(input[0].content).toEqual([
+      { type: "text", text: "Retry tool discovery" },
     ]);
+    expect(input[0].tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(["read", "webfetch"]),
+    );
   });
 
   test("preserves step metadata when the assistant message arrives later", async () => {

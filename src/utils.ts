@@ -6,8 +6,7 @@ export const log = (level: "info" | "warn" | "error", message: string) =>
   Effect.gen(function* () {
     const opencode = yield* OpencodeClientService;
 
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Existing violation tracked for incremental cleanup.
-    yield* Effect.sync(() =>
+    yield* Effect.tryPromise(() =>
       opencode.app.log({
         body: { service: "langfuse", level, message },
       }),

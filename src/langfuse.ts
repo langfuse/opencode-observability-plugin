@@ -425,8 +425,7 @@ export class LangfuseClient {
       return;
     }
 
-    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions -- Existing violation; fix separately.
-    if (!messageID && existingStep) {
+    if (!(messageID ?? "") && existingStep) {
       return;
     }
 

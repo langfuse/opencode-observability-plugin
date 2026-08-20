@@ -442,8 +442,9 @@ beforeAll(async () => {
     request.on("error", (error) => {
       collectorErrors.push(error);
     });
-    // eslint-disable-next-line @typescript-eslint/strict-void-return -- Existing violation; fix separately.
-    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+    });
     request.on("end", () => {
       try {
         requests.push({

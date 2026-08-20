@@ -1203,8 +1203,7 @@ export class LangfuseClient {
     const content = parts
       .filter(
         (part): part is Extract<MessagePart, { type: "text" }> =>
-          // eslint-disable-next-line no-restricted-syntax -- Existing restricted syntax; fix separately.
-          part.type === "text" && Boolean(part.text),
+          part.type === "text" && part.text !== "",
       )
       .map((part) => part.text)
       .join("");

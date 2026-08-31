@@ -1434,6 +1434,18 @@ const makePluginVersionSpanProcessor = () =>
     forceFlush: () => Promise.resolve(),
   }) satisfies SpanProcessor;
 
+// Trace tags, surfaced as Langfuse trace tags via the `langfuse.trace.tags`
+// OTTL attribute recognized by @langfuse/core's OTEL endpoint.
+const makeTraceTagsSpanProcessor = (tags: readonly string[]) =>
+  ({
+    onStart: (span: Span) => {
+      span.setAttribute("langfuse.trace.tags", JSON.stringify([...tags]));
+    },
+    onEnd: () => undefined,
+    shutdown: () => Promise.resolve(),
+    forceFlush: () => Promise.resolve(),
+  }) satisfies SpanProcessor;
+
 // Langfuse's OTEL processor may auto-mark exported spans as app roots, this overrides that.
 const makeAppRootSpanProcessor = (tracerName: string) =>
   ({
@@ -1459,6 +1471,7 @@ export const createLangfuseClient = (input: {
   environment: string;
   userId?: string;
   serviceName?: string;
+  tags?: readonly string[];
 }) =>
   Effect.gen(function* () {
     const tracerName = "opencode-langfuse-plugin";
@@ -1509,6 +1522,9 @@ export const createLangfuseClient = (input: {
         makePluginVersionSpanProcessor(),
         ...(input.userId != null
           ? [makeUserIdSpanProcessor(input.userId)]
+          : []),
+        ...(input.tags != null && input.tags.length > 0
+          ? [makeTraceTagsSpanProcessor(input.tags)]
           : []),
         processor,
         makeAppRootSpanProcessor(traceState.tracerName),

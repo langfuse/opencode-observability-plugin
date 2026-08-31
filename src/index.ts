@@ -27,6 +27,9 @@ const LangfuseCredentialsSchema = Schema.Struct({
   environment: Schema.optional(Schema.NonEmptyString),
   userId: Schema.optional(Schema.NonEmptyString),
   serviceName: Schema.optional(Schema.NonEmptyString),
+  tags: Schema.optional(
+    Schema.Array(Schema.NonEmptyString).pipe(Schema.maxItems(50)),
+  ),
 });
 
 type LangfuseCredentials = typeof LangfuseCredentialsSchema.Type;
@@ -34,6 +37,21 @@ type LangfuseCredentials = typeof LangfuseCredentialsSchema.Type;
 class MissingLangfuseCredentials extends Data.TaggedError(
   "MissingLangfuseCredentials",
 ) {}
+
+// LANGFUSE_TAGS accepts comma-separated tags: "opencode,production". Whitespace
+// around separators is trimmed; empty segments are dropped.
+const parseTagsEnv = (value: string | undefined): string[] | undefined => {
+  if (value === undefined || value === "") {
+    return undefined;
+  }
+
+  const tags = value
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter((tag) => tag !== "");
+
+  return tags.length > 0 ? tags.slice(0, 50) : undefined;
+};
 
 const loadLangfuseCredentials = Effect.gen(function* () {
   const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
@@ -53,6 +71,7 @@ const loadLangfuseCredentials = Effect.gen(function* () {
       environment: process.env.LANGFUSE_ENVIRONMENT,
       userId: process.env.LANGFUSE_USER_ID,
       serviceName: process.env.LANGFUSE_SERVICE_NAME,
+      tags: parseTagsEnv(process.env.LANGFUSE_TAGS),
     } satisfies LangfuseCredentials;
   }
 
@@ -396,6 +415,11 @@ const main = Effect.gen(function* () {
     const serviceName =
       credentials.serviceName ?? process.env.LANGFUSE_SERVICE_NAME;
 
+    // Config-file tags win; LANGFUSE_TAGS is the fallback so env-only setups
+    // can set tags too. Merge with de-duplication, preserving order.
+    const envTags = parseTagsEnv(process.env.LANGFUSE_TAGS) ?? [];
+    const tags = [...new Set([...(credentials.tags ?? []), ...envTags])];
+
     return yield* createLangfuseClient({
       publicKey: credentials.publicKey,
       secretKey: credentials.secretKey,
@@ -403,6 +427,7 @@ const main = Effect.gen(function* () {
       environment,
       userId,
       serviceName,
+      tags,
     });
   }).pipe(
     Effect.tap((client) =>

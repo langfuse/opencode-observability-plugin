@@ -43,6 +43,20 @@ Create `~/.config/opencode/opencode-langfuse.json` with your Langfuse credential
 
 Only `publicKey` and `secretKey` are required. If `baseUrl` is not set, the plugin uses `https://cloud.langfuse.com`. If `environment` is not set, it uses `development`.
 
+Optional `tags` attaches Langfuse trace tags to every trace exported by the plugin (as an array in the config file, or comma-separated via the `LANGFUSE_TAGS` environment variable). Values from both sources are merged and de-duplicated:
+
+```json
+{
+  "publicKey": "pk-lf-...",
+  "secretKey": "sk-lf-...",
+  "tags": ["opencode", "production"]
+}
+```
+
+```bash
+export LANGFUSE_TAGS="opencode,production"
+```
+
 You can also set credentials with environment variables:
 
 ```bash
@@ -51,6 +65,7 @@ export LANGFUSE_SECRET_KEY="sk-lf-..."
 export LANGFUSE_BASE_URL="https://cloud.langfuse.com"
 export LANGFUSE_ENVIRONMENT="development"
 export LANGFUSE_USER_ID="your-user-id"
+export LANGFUSE_TAGS="opencode,production"
 ```
 
 If both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set, the plugin uses environment variables instead of reading the config file. Optional values can be supplied either way.

@@ -1,18 +1,13 @@
-import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
-
 import type { Hooks, Plugin } from "@opencode-ai/plugin";
-import { Data, Effect, Layer, Option, Schema } from "effect";
+import { Effect, Layer, Option, Schema } from "effect";
 
 import {
   LangfuseClientService,
   buildSessionHistory,
-  createLangfuseClient,
-  type LangfuseClient,
   type ToolDefinition,
 } from "./langfuse.js";
 import { OpencodeClientService } from "./opencode.js";
+import { createLangfuseRuntime, createShutdownOnce } from "./runtime.js";
 import {
   McpContentSchema,
   McpToolResultSchema,
@@ -20,64 +15,6 @@ import {
   type OpencodeEvent,
 } from "./schema.js";
 import { log } from "./utils.js";
-
-const LangfuseCredentialsSchema = Schema.Struct({
-  publicKey: Schema.NonEmptyString,
-  secretKey: Schema.NonEmptyString,
-  baseUrl: Schema.optional(Schema.NonEmptyString),
-  environment: Schema.optional(Schema.NonEmptyString),
-  userId: Schema.optional(Schema.NonEmptyString),
-  serviceName: Schema.optional(Schema.NonEmptyString),
-});
-
-type LangfuseCredentials = typeof LangfuseCredentialsSchema.Type;
-
-class MissingLangfuseCredentials extends Data.TaggedError(
-  "MissingLangfuseCredentials",
-) {}
-
-const loadLangfuseCredentials = Effect.gen(function* () {
-  const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
-  const secretKey = process.env.LANGFUSE_SECRET_KEY;
-
-  if (
-    publicKey !== undefined &&
-    publicKey !== "" &&
-    secretKey !== undefined &&
-    secretKey !== ""
-  ) {
-    return {
-      publicKey,
-      secretKey,
-      // Prefer the canonical name while retaining the legacy name for semver compatibility.
-      baseUrl: process.env.LANGFUSE_BASE_URL ?? process.env.LANGFUSE_BASEURL,
-      environment: process.env.LANGFUSE_ENVIRONMENT,
-      userId: process.env.LANGFUSE_USER_ID,
-      serviceName: process.env.LANGFUSE_SERVICE_NAME,
-    } satisfies LangfuseCredentials;
-  }
-
-  const configPath = join(
-    homedir(),
-    ".config",
-    "opencode",
-    "opencode-langfuse.json",
-  );
-
-  const credentials = yield* Effect.tryPromise({
-    try: async () =>
-      Schema.decodeUnknownSync(Schema.parseJson(LangfuseCredentialsSchema))(
-        await readFile(configPath, "utf8"),
-      ),
-    catch: () => new MissingLangfuseCredentials(),
-  }).pipe(Effect.mapError(() => new MissingLangfuseCredentials()));
-
-  if (!credentials.publicKey || !credentials.secretKey) {
-    return yield* Effect.fail(new MissingLangfuseCredentials());
-  }
-
-  return credentials;
-});
 
 const refreshSessionHistory = (sessionID: string) =>
   Effect.gen(function* () {
@@ -402,57 +339,22 @@ const normalizeToolResult = (tool: string, output: unknown) => {
   return { title: tool, output: "", isError: false, unexpected: true };
 };
 
-const createShutdownOnce = (langfuse: LangfuseClient) => {
-  let shutdownPromise: Promise<void> | undefined;
-
-  return () => {
-    return (shutdownPromise ??= Effect.runPromise(langfuse.shutdown));
-  };
-};
-
 const main = Effect.gen(function* () {
   const opencode = yield* OpencodeClientService;
 
-  const langfuse = yield* Effect.gen(function* () {
-    const credentials = yield* loadLangfuseCredentials;
-
-    const baseUrl =
-      credentials.baseUrl ??
-      // Prefer the canonical name while retaining the legacy name for semver compatibility.
-      process.env.LANGFUSE_BASE_URL ??
-      process.env.LANGFUSE_BASEURL ??
-      "https://cloud.langfuse.com";
-
-    const environment =
-      credentials.environment ??
-      process.env.LANGFUSE_ENVIRONMENT ??
-      "development";
-
-    const userId = credentials.userId ?? process.env.LANGFUSE_USER_ID;
-
-    const serviceName =
-      credentials.serviceName ?? process.env.LANGFUSE_SERVICE_NAME;
-
-    return yield* createLangfuseClient({
-      publicKey: credentials.publicKey,
-      secretKey: credentials.secretKey,
-      baseUrl,
-      environment,
-      userId,
-      serviceName,
-    });
-  }).pipe(
-    Effect.tap((client) =>
-      log("info", `OTEL tracing initialized → ${client.baseUrl}`),
-    ),
-    Effect.catchTag("MissingLangfuseCredentials", () =>
-      log("warn", "[Tracing disabled] Missing langfuse credentials"),
+  const langfuse = yield* createLangfuseRuntime.pipe(
+    Effect.catchTag("MissingLangfuseCredentials", (error) =>
+      log("warn", `[Tracing disabled] ${error.message}`).pipe(
+        Effect.as(undefined),
+      ),
     ),
   );
 
   if (!langfuse) {
     return {};
   }
+
+  yield* log("info", `OTEL tracing initialized → ${langfuse.baseUrl}`);
 
   const hooksLayer = Layer.merge(
     Layer.succeed(OpencodeClientService, opencode),

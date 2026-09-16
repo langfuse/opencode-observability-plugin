@@ -4,7 +4,16 @@ OpenCode plugin that sends OpenCode session telemetry to Langfuse. It traces use
 
 ## Quick Start
 
-Enable the plugin in your `opencode.json` or `opencode.jsonc`:
+For OpenCode 2, enable the `/v2` entrypoint in your configuration:
+
+```json
+{
+  "plugins": ["@langfuse/opencode-observability-plugin/v2"]
+}
+```
+
+For OpenCode 1, enable the default entrypoint in your `opencode.json` or
+`opencode.jsonc`:
 
 ```json
 {
@@ -22,10 +31,11 @@ Restart OpenCode after changing the config.
 We aim to support a wide range of OpenCode v1 versions, including older event
 payloads that are no longer part of the current OpenCode internals.
 
-Validated versions:
+Validated versions and entrypoints:
 
-- `1.15.13`
-- `1.18.19`
+- OpenCode `2.0.4`: `@langfuse/opencode-observability-plugin/v2`
+- OpenCode `1.15.13`: `@langfuse/opencode-observability-plugin`
+- OpenCode `1.18.19`: `@langfuse/opencode-observability-plugin`
 
 ## Langfuse Credentials
 

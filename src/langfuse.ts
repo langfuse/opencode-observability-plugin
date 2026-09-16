@@ -484,6 +484,41 @@ export class LangfuseClient {
     parts: MessagePart[];
     tools?: ToolDefinition[];
   }) {
+    this.traceFormattedUserMessage({
+      ...input,
+      content: input.parts.map(formatUserMessagePart),
+    });
+  }
+
+  traceUserPrompt(input: {
+    sessionID: string;
+    messageID?: string;
+    content: FormattedMessagePart[];
+    tools?: ToolDefinition[];
+  }) {
+    this.traceFormattedUserMessage(input);
+  }
+
+  setPendingToolDefinitions(sessionID: string, tools: ToolDefinition[]) {
+    const messages = this.traceState.generationInputsBySession.get(sessionID);
+    if (!messages || tools.length === 0) {
+      return;
+    }
+
+    this.traceState.generationInputsBySession.set(
+      sessionID,
+      withToolDefinitions(messages, tools),
+    );
+  }
+
+  private traceFormattedUserMessage(input: {
+    sessionID: string;
+    messageID?: string;
+    agent?: string;
+    model?: { providerID: string; modelID: string };
+    content: FormattedMessagePart[];
+    tools?: ToolDefinition[];
+  }) {
     if (
       input.messageID != null &&
       this.traceState.tracedMessageIds.has(input.messageID)
@@ -493,7 +528,7 @@ export class LangfuseClient {
 
     this.traceState.abortedSessions.delete(input.sessionID);
 
-    const formattedMessage = formatUserMessage(input.parts);
+    const formattedMessage = { role: "user" as const, content: input.content };
     const generationInput = [
       {
         ...formattedMessage,
@@ -651,6 +686,7 @@ export class LangfuseClient {
     completed: number;
     finish?: string;
     cost: number;
+    output?: unknown;
     tokens: {
       total?: number;
       input: number;
@@ -669,7 +705,7 @@ export class LangfuseClient {
 
     this.traceState.tracedGenerationIds.add(input.messageID);
 
-    const output = this.getAssistantMessage(input.messageID);
+    const output = input.output ?? this.getAssistantMessage(input.messageID);
     const turn = this.getTurnObservation(input.sessionID, input.parentID);
 
     if (input.mode !== "compaction") {

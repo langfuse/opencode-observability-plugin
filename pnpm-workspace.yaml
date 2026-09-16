@@ -8,3 +8,9 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - "@opencode-ai/plugin@1.18.19"
   - "@opencode-ai/sdk@1.18.19"
+  - "@opencode/ai@2.0.4"
+  - "@opencode/client@2.0.4"
+  - "@opencode/plugin@2.0.4"
+  - "@opencode/protocol@2.0.4"
+  - "@opencode/schema@2.0.4"
+  - "@opencode/util@2.0.4"

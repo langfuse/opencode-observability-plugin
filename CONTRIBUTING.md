@@ -4,8 +4,6 @@ See the [main CONTRIBUTING.md](https://github.com/langfuse/langfuse/blob/main/CO
 
 ## Local Development
 
-This package is currently marked as private. For local development, use a local plugin path in your OpenCode config instead of the package name.
-
 Install dependencies:
 
 ```bash
@@ -16,6 +14,36 @@ Build the plugin:
 
 ```bash
 pnpm run build
+```
+
+To test the plugin globally, add its built entrypoint to `~/.config/opencode/opencode.jsonc`. Replace `/path/to/langfuse-opencode` with the absolute path to this repository.
+
+For OpenCode 2, configure the V2 entrypoint:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["/path/to/langfuse-opencode/dist/v2"],
+}
+```
+
+For OpenCode 1, configure the V1 entrypoint instead:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "openTelemetry": true,
+  },
+  "plugin": ["/path/to/langfuse-opencode/dist/v1/index.js"],
+}
+```
+
+Rebuild the package after making changes and restart OpenCode before testing:
+
+```bash
+pnpm run build
+opencode service restart
 ```
 
 Format files:
@@ -30,7 +58,7 @@ Check formatting:
 pnpm run format:check
 ```
 
-tsdown bundles the plugin and its runtime dependencies into `dist/index.js`. Do not edit generated files in `dist/` by hand.
+tsdown bundles the plugins and their runtime dependencies into `dist/v1/index.js` and `dist/v2/index.js`. Do not edit generated files in `dist/` by hand.
 
 ## Releasing
 

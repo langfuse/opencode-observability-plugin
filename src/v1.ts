@@ -411,19 +411,6 @@ const main = Effect.gen(function* () {
         ),
       ),
 
-    config: (config) =>
-      runHook(
-        "config",
-        Effect.gen(function* () {
-          if (config.experimental?.openTelemetry !== true) {
-            yield* log(
-              "warn",
-              "[Tracing disabled] Please enable `experimental.openTelemetry` in your opencode.jsonc to use the Langfuse plugin",
-            );
-          }
-        }),
-      ),
-
     event: ({ event }) => runHook("event", eventHook(event, shutdownOnce)),
 
     "chat.message": (input, output) =>

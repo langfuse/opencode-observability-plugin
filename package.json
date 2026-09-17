@@ -2,12 +2,12 @@
   "name": "@langfuse/opencode-observability-plugin",
   "version": "0.5.0-rc.1",
   "description": "OpenCode plugin that sends session telemetry to Langfuse.",
-  "main": "dist/v1/index.js",
-  "types": "dist/v1.d.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/v1.d.ts",
-      "import": "./dist/v1/index.js"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     },
     "./v1": {
       "types": "./dist/v1.d.ts",
@@ -61,7 +61,7 @@
     "effect": "^3.22.1"
   },
   "peerDependencies": {
-    "@opencode-ai/plugin": "^1.18.19",
+    "@opencode-ai/plugin": "^1.18.29",
     "@opencode/plugin": "^2.0.4"
   },
   "peerDependenciesMeta": {
@@ -74,7 +74,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@opencode-ai/plugin": "^1.18.19",
+    "@opencode-ai/plugin": "^1.18.29",
     "@opencode/plugin": "^2.0.4",
     "@types/node": "^26.1.2",
     "eslint": "^10.8.1",

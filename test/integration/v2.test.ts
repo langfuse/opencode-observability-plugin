@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 
+import CombinedPlugin from "@langfuse/opencode-observability-plugin";
 import LangfusePlugin from "@langfuse/opencode-observability-plugin/v2";
 import { Schema } from "effect";
 import { beforeEach, describe, expect, test, vi } from "vitest";
@@ -50,6 +51,12 @@ describe("OpenCode 2 package entrypoint", () => {
   test("resolves as a plugin object", () => {
     expect(LangfusePlugin.id).toBe("langfuse.observability");
     expect(typeof LangfusePlugin.setup).toBe("function");
+  });
+
+  test("exposes both OpenCode plugin APIs from the default entrypoint", () => {
+    expect(CombinedPlugin.id).toBe("langfuse.observability");
+    expect(typeof CombinedPlugin.setup).toBe("function");
+    expect(typeof CombinedPlugin.server).toBe("function");
   });
 
   test("does not import the OpenCode 2 SDK at runtime", async () => {

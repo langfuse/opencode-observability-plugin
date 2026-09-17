@@ -4,22 +4,18 @@ OpenCode plugin that sends OpenCode session telemetry to Langfuse. It traces use
 
 ## Quick Start
 
-For OpenCode 2, enable the `/v2` entrypoint in your configuration:
+For OpenCode 2, enable the plugin in your configuration:
 
 ```json
 {
-  "plugins": ["@langfuse/opencode-observability-plugin/v2"]
+  "plugins": ["@langfuse/opencode-observability-plugin@latest"]
 }
 ```
 
-For OpenCode 1, enable the default entrypoint in your `opencode.json` or
-`opencode.jsonc`:
+For OpenCode 1, use the same package in your `opencode.json` or `opencode.jsonc`:
 
 ```json
 {
-  "experimental": {
-    "openTelemetry": true
-  },
   "plugin": ["@langfuse/opencode-observability-plugin@latest"]
 }
 ```
@@ -28,14 +24,15 @@ Restart OpenCode after changing the config.
 
 ## Supported Versions
 
-We aim to support a wide range of OpenCode v1 versions, including older event
-payloads that are no longer part of the current OpenCode internals.
+The default package entrypoint supports both OpenCode 1 and OpenCode 2. OpenCode
+1 calls the plugin's `server()` implementation, while OpenCode 2 calls its
+`setup()` implementation. The `/v1` and `/v2` entrypoints remain available for
+direct imports.
 
 Validated versions and entrypoints:
 
-- OpenCode `2.0.4`: `@langfuse/opencode-observability-plugin/v2`
-- OpenCode `1.15.13`: `@langfuse/opencode-observability-plugin`
-- OpenCode `1.18.19`: `@langfuse/opencode-observability-plugin`
+- OpenCode `2.0.4` and newer: `@langfuse/opencode-observability-plugin`
+- OpenCode `1.18.29` and newer: `@langfuse/opencode-observability-plugin`
 
 ## Langfuse Credentials
 

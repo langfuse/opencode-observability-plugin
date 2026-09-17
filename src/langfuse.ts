@@ -1679,6 +1679,19 @@ const makePluginVersionSpanProcessor = () =>
     forceFlush: () => Promise.resolve(),
   }) satisfies SpanProcessor;
 
+const makeOpencodeVersionSpanProcessor = (version: string) =>
+  ({
+    onStart: (span: Span) => {
+      span.setAttribute(
+        "langfuse.observation.metadata.opencodeVersion",
+        version,
+      );
+    },
+    onEnd: () => undefined,
+    shutdown: () => Promise.resolve(),
+    forceFlush: () => Promise.resolve(),
+  }) satisfies SpanProcessor;
+
 // Langfuse's OTEL processor may auto-mark exported spans as app roots, this overrides that.
 const makeAppRootSpanProcessor = (tracerName: string) =>
   ({
@@ -1704,6 +1717,7 @@ export const createLangfuseClient = (input: {
   environment: string;
   userId?: string;
   serviceName?: string;
+  opencodeVersion?: string;
 }) =>
   Effect.gen(function* () {
     const tracerName = "opencode-langfuse-plugin";
@@ -1754,6 +1768,9 @@ export const createLangfuseClient = (input: {
         ),
       spanProcessors: [
         makePluginVersionSpanProcessor(),
+        ...(input.opencodeVersion != null
+          ? [makeOpencodeVersionSpanProcessor(input.opencodeVersion)]
+          : []),
         ...(input.userId != null
           ? [makeUserIdSpanProcessor(input.userId)]
           : []),

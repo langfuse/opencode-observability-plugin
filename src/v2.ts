@@ -8,7 +8,7 @@ const LangfusePlugin = {
   id: "langfuse.observability",
   async setup(ctx) {
     const langfuse = await Effect.runPromise(
-      createLangfuseRuntime.pipe(
+      createLangfuseRuntime({ opencodeVersion: ctx.app.version }).pipe(
         Effect.catchTag("MissingLangfuseCredentials", (error) =>
           Effect.sync(() => {
             console.warn(`[Langfuse tracing disabled] ${error.message}`);

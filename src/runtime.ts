@@ -77,26 +77,28 @@ const loadLangfuseCredentials = Effect.gen(function* () {
   return credentials;
 });
 
-export const createLangfuseRuntime = Effect.gen(function* () {
-  const credentials = yield* loadLangfuseCredentials;
-  const client = yield* createLangfuseClient({
-    publicKey: credentials.publicKey,
-    secretKey: credentials.secretKey,
-    baseUrl:
-      credentials.baseUrl ??
-      process.env.LANGFUSE_BASE_URL ??
-      process.env.LANGFUSE_BASEURL ??
-      "https://cloud.langfuse.com",
-    environment:
-      credentials.environment ??
-      process.env.LANGFUSE_ENVIRONMENT ??
-      "development",
-    userId: credentials.userId ?? process.env.LANGFUSE_USER_ID,
-    serviceName: credentials.serviceName ?? process.env.LANGFUSE_SERVICE_NAME,
-  });
+export const createLangfuseRuntime = (input: { opencodeVersion?: string }) =>
+  Effect.gen(function* () {
+    const credentials = yield* loadLangfuseCredentials;
+    const client = yield* createLangfuseClient({
+      publicKey: credentials.publicKey,
+      secretKey: credentials.secretKey,
+      baseUrl:
+        credentials.baseUrl ??
+        process.env.LANGFUSE_BASE_URL ??
+        process.env.LANGFUSE_BASEURL ??
+        "https://cloud.langfuse.com",
+      environment:
+        credentials.environment ??
+        process.env.LANGFUSE_ENVIRONMENT ??
+        "development",
+      userId: credentials.userId ?? process.env.LANGFUSE_USER_ID,
+      serviceName: credentials.serviceName ?? process.env.LANGFUSE_SERVICE_NAME,
+      opencodeVersion: input.opencodeVersion,
+    });
 
-  return client;
-});
+    return client;
+  });
 
 export const createShutdownOnce = (langfuse: LangfuseClient) => {
   let shutdownPromise: Promise<void> | undefined;

@@ -342,7 +342,7 @@ const normalizeToolResult = (tool: string, output: unknown) => {
 const main = Effect.gen(function* () {
   const opencode = yield* OpencodeClientService;
 
-  const langfuse = yield* createLangfuseRuntime.pipe(
+  const langfuse = yield* createLangfuseRuntime({}).pipe(
     Effect.catchTag("MissingLangfuseCredentials", (error) =>
       log("warn", `[Tracing disabled] ${error.message}`).pipe(
         Effect.as(undefined),

@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import SourcePlugin from "../../src/v2.js";
 
 const runtime = vi.hoisted(() => ({
+  createLangfuseRuntime: vi.fn(),
   traceUserPrompt: vi.fn(),
   setPendingToolDefinitions: vi.fn(),
   rememberToolCall: vi.fn(),
@@ -30,10 +31,13 @@ vi.mock("../../src/runtime.js", async () => {
   const { Effect } = await import("effect");
 
   return {
-    createLangfuseRuntime: Effect.succeed({
-      ...runtime,
-      forceFlush: Effect.void,
-    }),
+    createLangfuseRuntime: (input: { opencodeVersion?: string }) => {
+      runtime.createLangfuseRuntime(input);
+      return Effect.succeed({
+        ...runtime,
+        forceFlush: Effect.void,
+      });
+    },
     createShutdownOnce: () => runtime.shutdown,
   };
 });
@@ -61,6 +65,7 @@ describe("OpenCode 2 package entrypoint", () => {
   test("finalizes and flushes failed executions", async () => {
     const registration = { dispose: vi.fn(() => Promise.resolve()) };
     const contextInput: unknown = {
+      app: { version: "2.0.4" },
       session: { hook: vi.fn(() => Promise.resolve(registration)) },
       tool: { hook: vi.fn(() => Promise.resolve(registration)) },
       event: {
@@ -89,6 +94,9 @@ describe("OpenCode 2 package entrypoint", () => {
     expect(cleanup).toBeTypeOf("function");
     await cleanup?.();
 
+    expect(runtime.createLangfuseRuntime).toHaveBeenCalledWith({
+      opencodeVersion: "2.0.4",
+    });
     expect(runtime.endActiveToolObservations).toHaveBeenCalledWith("session-1");
     expect(runtime.endActiveGenerationSteps).toHaveBeenCalledWith("session-1");
     expect(runtime.endActiveTurnObservations).toHaveBeenCalledWith("session-1");
@@ -117,6 +125,7 @@ describe("OpenCode 2 package entrypoint", () => {
     });
     const registration = { dispose: vi.fn(() => Promise.resolve()) };
     const contextInput: unknown = {
+      app: { version: "2.0.4" },
       session: {
         hook: vi.fn((name: string, handler: typeof prompt) => {
           if (name === "prompt") {

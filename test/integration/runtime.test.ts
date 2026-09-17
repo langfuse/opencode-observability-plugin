@@ -45,7 +45,9 @@ describe("Langfuse runtime", () => {
     process.env.LANGFUSE_PUBLIC_KEY = "";
     process.env.LANGFUSE_SECRET_KEY = "";
 
-    const error = await Effect.runPromise(Effect.flip(createLangfuseRuntime));
+    const error = await Effect.runPromise(
+      Effect.flip(createLangfuseRuntime({})),
+    );
 
     expect(error).toMatchObject({
       _tag: "MissingLangfuseCredentials",

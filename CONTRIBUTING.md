@@ -4,8 +4,6 @@ See the [main CONTRIBUTING.md](https://github.com/langfuse/langfuse/blob/main/CO
 
 ## Local Development
 
-This package is currently marked as private. For local development, use a local plugin path in your OpenCode config instead of the package name.
-
 Install dependencies:
 
 ```bash
@@ -16,6 +14,33 @@ Build the plugin:
 
 ```bash
 pnpm run build
+```
+
+To test the plugin globally, add its combined built entrypoint to `~/.config/opencode/opencode.jsonc`. Replace `/path/to/langfuse-opencode` with the absolute path to this repository. The same entrypoint supports OpenCode 1.18.29 and newer and OpenCode 2.
+
+For OpenCode 2:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["/path/to/langfuse-opencode/dist/index.js"],
+}
+```
+
+For OpenCode 1:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["/path/to/langfuse-opencode/dist/index.js"],
+}
+```
+
+Rebuild the package after making changes and restart OpenCode before testing:
+
+```bash
+pnpm run build
+opencode service restart
 ```
 
 Format files:
@@ -30,7 +55,7 @@ Check formatting:
 pnpm run format:check
 ```
 
-tsdown bundles the plugin and its runtime dependencies into `dist/index.js`. Do not edit generated files in `dist/` by hand.
+tsdown bundles the combined plugin and its runtime dependencies into `dist/index.js`. OpenCode 1 calls its `server()` implementation and OpenCode 2 calls its `setup()` implementation. Version-specific entrypoints remain available at `dist/v1/index.js` and `dist/v2/index.js`. Do not edit generated files in `dist/` by hand.
 
 ## Releasing
 

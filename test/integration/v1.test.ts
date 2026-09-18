@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import type { IncomingHttpHeaders, Server } from "node:http";
 
 import { trace } from "@opentelemetry/api";
+import LangfusePlugin from "@langfuse/opencode-observability-plugin/v1";
 import { Schema } from "effect";
 import {
   afterAll,
@@ -70,7 +71,7 @@ type CapturedRequest = {
   body: typeof CapturedRequestBodySchema.Type;
 };
 
-type Plugin = (typeof import("../../src/index.js"))["default"];
+type Plugin = (typeof import("../../src/v1.js"))["default"];
 type PluginHooks = Awaited<ReturnType<Plugin>>;
 type PluginEvent = Parameters<NonNullable<PluginHooks["event"]>>[0]["event"];
 type TestPluginEvent =
@@ -569,7 +570,7 @@ beforeAll(async () => {
   process.env.LANGFUSE_USER_ID = "test-user";
   delete process.env.LANGFUSE_BASEURL;
 
-  const builtPluginUrl = new URL("../../dist/index.js", import.meta.url);
+  const builtPluginUrl = new URL("../../dist/v1/index.js", import.meta.url);
   const builtPlugin: unknown = await import(builtPluginUrl.href);
   plugin = Schema.decodeUnknownSync(PluginModuleSchema)(builtPlugin).default;
 });
@@ -620,6 +621,20 @@ afterAll(async () => {
 });
 
 describe("built plugin", { concurrent: false }, () => {
+  test("resolves the OpenCode 1 package entrypoint", () => {
+    expect(typeof LangfusePlugin).toBe("function");
+  });
+
+  test("does not import the OpenCode 1 SDK at runtime", () => {
+    const output = readFileSync(
+      new URL("../../dist/v1/index.js", import.meta.url),
+      "utf8",
+    );
+
+    expect(output).not.toContain('from "@opencode-ai/plugin"');
+    expect(output).not.toContain("from '@opencode-ai/plugin'");
+  });
+
   test("exports a complete multi-turn OpenCode session", async () => {
     const sessionID = "happy-session";
     const started = startedAt;

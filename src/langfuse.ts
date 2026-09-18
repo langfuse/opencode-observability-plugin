@@ -975,23 +975,7 @@ export class LangfuseClient {
 
     this.ensureGenerationParent(input.sessionID);
 
-    let observationName = input.tool;
-    if (
-      typeof input.args === "object" &&
-      input.args !== null &&
-      !Array.isArray(input.args)
-    ) {
-      const semanticName =
-        input.tool === "skill" && "name" in input.args
-          ? input.args.name
-          : input.tool === "task" && "subagent_type" in input.args
-            ? input.args.subagent_type
-            : undefined;
-
-      if (typeof semanticName === "string" && semanticName.trim() !== "") {
-        observationName = `${input.tool}:${semanticName.trim()}`;
-      }
-    }
+    const observationName = this.getToolObservationName(input.tool, input.args);
 
     this.withObservationParent(
       input.sessionID,
@@ -1139,6 +1123,28 @@ export class LangfuseClient {
     this.traceState.activeToolObservations.delete(input.callID);
     this.traceState.finalizedToolCallIds.add(input.callID);
     this.traceState.toolMessageIdsByCallId.delete(input.callID);
+  }
+
+  // Include skill or subagent names for grouping, falling back to the tool name
+  // when arguments are missing or invalid. Preserve the original input data.
+  private getToolObservationName(tool: string, args: unknown) {
+    if (typeof args !== "object" || args === null || Array.isArray(args)) {
+      return tool;
+    }
+
+    const semanticName =
+      tool === "skill" && "name" in args
+        ? args.name
+        : tool === "task" && "subagent_type" in args
+          ? args.subagent_type
+          : undefined;
+
+    if (typeof semanticName !== "string") {
+      return tool;
+    }
+
+    const name = semanticName.trim();
+    return name === "" ? tool : `${tool}:${name}`;
   }
 
   private ensureGenerationParent(sessionID: string) {

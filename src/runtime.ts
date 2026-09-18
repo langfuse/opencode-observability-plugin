@@ -17,7 +17,7 @@ const LangfuseCredentialsSchema = Schema.Struct({
 
 type LangfuseCredentials = typeof LangfuseCredentialsSchema.Type;
 
-export class MissingLangfuseCredentials extends Data.TaggedError(
+class MissingLangfuseCredentials extends Data.TaggedError(
   "MissingLangfuseCredentials",
 )<{ readonly message: string }> {}
 

@@ -210,16 +210,20 @@ describe("OpenCode 2 package entrypoint", () => {
     )(contextInput);
 
     const cleanup = await SourcePlugin.setup(context);
-    await vi.waitFor(() => expect(prompt).toBeTypeOf("function"));
+    await vi.waitFor(() => {
+      expect(prompt).toBeTypeOf("function");
+    });
     prompt?.({
       sessionID: "session-1",
       messageID: "user-1",
       prompt: { text: "Say hello" },
     });
-    await vi.waitFor(() => expect(executeBefore).toBeTypeOf("function"));
-    await vi.waitFor(() =>
-      expect(runtime.startActiveGenerationStep).toHaveBeenCalled(),
-    );
+    await vi.waitFor(() => {
+      expect(executeBefore).toBeTypeOf("function");
+    });
+    await vi.waitFor(() => {
+      expect(runtime.startActiveGenerationStep).toHaveBeenCalled();
+    });
     executeBefore?.({
       id: "call-1",
       messageID: "assistant-1",
@@ -229,14 +233,14 @@ describe("OpenCode 2 package entrypoint", () => {
     });
     releaseStep?.();
 
-    await vi.waitFor(() =>
+    await vi.waitFor(() => {
       expect(runtime.traceUserPrompt).toHaveBeenCalledWith({
         sessionID: "session-1",
         messageID: "user-1",
         content: [{ type: "text", text: "Say hello" }],
-      }),
-    );
-    await vi.waitFor(() =>
+      });
+    });
+    await vi.waitFor(() => {
       expect(runtime.traceGeneration).toHaveBeenCalledWith(
         expect.objectContaining({
           parentID: "user-1",
@@ -254,8 +258,8 @@ describe("OpenCode 2 package entrypoint", () => {
             }),
           ],
         }),
-      ),
-    );
+      );
+    });
     await cleanup?.();
   });
 });

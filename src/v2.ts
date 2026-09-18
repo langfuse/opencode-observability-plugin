@@ -76,7 +76,7 @@ const LangfusePlugin = {
         generationDetails.get(input.messageID)?.toolCalls.set(input.id, {
           id: input.id,
           name: input.tool,
-          arguments: JSON.stringify(input.input) ?? "null",
+          arguments: JSON.stringify(input.input),
         });
         langfuse.rememberToolCall({
           callID: input.id,

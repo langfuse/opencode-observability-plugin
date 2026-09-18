@@ -27,6 +27,7 @@ const LangfusePlugin = {
     const generationDetails = new Map<
       string,
       {
+        sessionID: string;
         agent: string;
         model: { id: string; providerID: string; variant?: string };
         started: number;
@@ -67,7 +68,11 @@ const LangfusePlugin = {
             parameters: tool.input,
           }),
         );
-        langfuse.setPendingToolDefinitions(input.sessionID, tools);
+        langfuse.setGenerationInputSnapshot(input.sessionID, {
+          system: input.system,
+          messages: input.messages,
+          tools,
+        });
       }),
     );
 
@@ -147,6 +152,7 @@ const LangfusePlugin = {
 
           if (event.type === "session.step.started") {
             generationDetails.set(event.data.assistantMessageID, {
+              sessionID: event.data.sessionID,
               agent: event.data.agent,
               model: event.data.model,
               started: event.created,
@@ -240,14 +246,34 @@ const LangfusePlugin = {
             });
           }
 
+          if (event.type === "session.execution.failed") {
+            langfuse.traceSessionError({
+              sessionID: event.data.sessionID,
+              error: {
+                name: event.data.error.type,
+                message: event.data.error.message,
+              },
+            });
+            for (const [messageID, details] of generationDetails) {
+              if (details.sessionID === event.data.sessionID) {
+                generationDetails.delete(messageID);
+              }
+            }
+            await Effect.runPromise(langfuse.forceFlush);
+          }
+
           if (
             event.type === "session.execution.succeeded" ||
-            event.type === "session.execution.failed" ||
             event.type === "session.execution.interrupted"
           ) {
             langfuse.endActiveToolObservations(event.data.sessionID);
             langfuse.endActiveGenerationSteps(event.data.sessionID);
             langfuse.endActiveTurnObservations(event.data.sessionID);
+            for (const [messageID, details] of generationDetails) {
+              if (details.sessionID === event.data.sessionID) {
+                generationDetails.delete(messageID);
+              }
+            }
             await Effect.runPromise(langfuse.forceFlush);
           }
 

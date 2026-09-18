@@ -1093,6 +1093,217 @@ describe("built plugin", { concurrent: false }, () => {
     ).toHaveLength(0);
   });
 
+  test.each([
+    {
+      tool: "skill",
+      args: { name: "resolve-dependencies" },
+      observationName: "skill:resolve-dependencies",
+    },
+    {
+      tool: "task",
+      args: { subagent_type: "developer", prompt: "Fix the build" },
+      observationName: "task:developer",
+    },
+  ])(
+    "exports $observationName without changing tool data",
+    async ({ tool, args, observationName }) => {
+      const sessionID = "semantic-tool-session";
+      const callID = "semantic-tool-call";
+      const messageID = "semantic-tool-assistant";
+      await sendUserMessage({
+        sessionID,
+        messageID: "semantic-tool-user",
+        text: "Fix the build",
+        started: startedAt,
+      });
+      await startGeneration({
+        id: "semantic-tool-step",
+        sessionID,
+        assistantMessageID: messageID,
+        started: startedAt + 100,
+      });
+      await hooks["tool.execute.before"]?.(
+        { sessionID, callID, tool },
+        { args },
+      );
+      const part = {
+        id: "semantic-tool-part",
+        sessionID,
+        messageID,
+        type: "tool" as const,
+        callID,
+        tool,
+      };
+      await emitEvent({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            ...part,
+            state: {
+              status: "running",
+              input: args,
+              time: { start: startedAt + 200 },
+            },
+          },
+        },
+      });
+      await hooks["tool.execute.after"]?.(
+        { sessionID, callID, tool, args },
+        { title: "Done", output: "ok", metadata: {} },
+      );
+      await emitEvent({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            ...part,
+            state: {
+              status: "completed",
+              input: args,
+              title: "Done",
+              output: "ok",
+              metadata: {},
+              time: { start: startedAt + 200, end: startedAt + 300 },
+            },
+          },
+        },
+      });
+
+      const { spans } = await flushSession(sessionID);
+      const tools = spans.filter(
+        (span) => getAttributes(span)["langfuse.observation.type"] === "tool",
+      );
+      expect(tools).toHaveLength(1);
+      const observation = tools[0];
+      expect(observation.name).toBe(observationName);
+      expect(observation.parentSpanId).toBe(
+        getSpan(spans, "opencode.generation").spanId,
+      );
+      expect(
+        getJsonAttribute(observation, "langfuse.observation.input"),
+      ).toEqual(args);
+      expect(
+        getJsonAttribute(observation, "langfuse.observation.metadata"),
+      ).toEqual({ callID, tool });
+      expect(
+        getJsonAttribute(observation, "langfuse.observation.output"),
+      ).toEqual({ title: "Done", output: "ok" });
+    },
+  );
+
+  test.each(["completed", "error"] as const)(
+    "names semantic tools from %s parts without execution hooks",
+    async (status) => {
+      const sessionID = "semantic-tool-parts-session";
+      for (const [tool, args, observationName] of [
+        [
+          "skill",
+          { name: "resolve-dependencies" },
+          "skill:resolve-dependencies",
+        ],
+        ["task", { subagent_type: "developer" }, "task:developer"],
+      ] as const) {
+        await emitEvent({
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: `${tool}-part`,
+              sessionID,
+              messageID: "semantic-tool-parts-assistant",
+              type: "tool",
+              callID: `${tool}-call`,
+              tool,
+              state: {
+                input: args,
+                time: { start: startedAt, end: startedAt + 100 },
+                ...(status === "completed"
+                  ? { status, title: "Done", output: "ok", metadata: {} }
+                  : { status, error: "Tool failed" }),
+              },
+            },
+          },
+        });
+        const { spans } = await flushSession(sessionID);
+        expect(spans).toHaveLength(1);
+        const observation = getSpan(spans, observationName);
+        expect(
+          getJsonAttribute(observation, "langfuse.observation.input"),
+        ).toEqual(args);
+        expect(
+          getJsonAttribute(observation, "langfuse.observation.metadata"),
+        ).toEqual({ callID: `${tool}-call`, tool });
+        if (status === "error") {
+          expect(observation.status?.code).toBe(2);
+          expect(
+            getJsonAttribute(observation, "langfuse.observation.output"),
+          ).toEqual({ error: "Tool failed" });
+        }
+      }
+    },
+  );
+
+  test("keeps fallback tool names and preserves inputs when normalizing names", async () => {
+    const sessionID = "tool-name-fallback-session";
+    const cases = [
+      { tool: "skill", args: {}, name: "skill" },
+      { tool: "skill", args: { name: "" }, name: "skill" },
+      { tool: "skill", args: { name: " \t " }, name: "skill" },
+      { tool: "skill", args: { name: 42 }, name: "skill" },
+      { tool: "skill", args: { name: ["review"] }, name: "skill" },
+      { tool: "skill", args: null, name: "skill" },
+      { tool: "skill", args: "review", name: "skill" },
+      { tool: "task", args: { name: "developer" }, name: "task" },
+      { tool: "task", args: { subagent_type: "" }, name: "task" },
+      { tool: "task", args: { subagent_type: " \n " }, name: "task" },
+      { tool: "task", args: { subagent_type: null }, name: "task" },
+      { tool: "task", args: [], name: "task" },
+      {
+        tool: "read",
+        args: { name: "README.md", subagent_type: "developer" },
+        name: "read",
+      },
+      { tool: "skill", args: { name: " review " }, name: "skill:review" },
+      {
+        tool: "task",
+        args: { subagent_type: " developer " },
+        name: "task:developer",
+      },
+    ];
+    for (const [index, { tool, args }] of cases.entries()) {
+      await hooks["tool.execute.after"]?.(
+        { sessionID, callID: `fallback-${index.toString()}`, tool, args },
+        { title: "Done", output: "ok", metadata: {} },
+      );
+    }
+    const { spans } = await flushSession(sessionID);
+    expect(spans).toHaveLength(cases.length);
+    for (const [index, { tool, args, name }] of cases.entries()) {
+      const callID = `fallback-${index.toString()}`;
+      const observation = spans.find((span) => {
+        const metadata = getJsonAttribute(
+          span,
+          "langfuse.observation.metadata",
+        );
+        return (
+          typeof metadata === "object" &&
+          metadata !== null &&
+          "callID" in metadata &&
+          metadata.callID === callID
+        );
+      });
+      expect(observation).toBeDefined();
+      if (!observation) {
+        throw new Error(`Expected tool observation ${callID}`);
+      }
+      expect(observation.name).toBe(name);
+      expect(
+        getJsonAttribute(observation, "langfuse.observation.input"),
+      ).toEqual(args);
+      expect(
+        getJsonAttribute(observation, "langfuse.observation.metadata"),
+      ).toEqual({ callID, tool });
+    }
+  });
+
   // https://github.com/anomalyco/opencode/blob/v1.15.13/packages/core/src/session-event.ts#L353-L362
   test("supports OpenCode >=1.15.13 <1.16 compaction events", async () => {
     const sessionID = "legacy-compaction-session";

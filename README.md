@@ -55,6 +55,18 @@ export LANGFUSE_USER_ID="your-user-id"
 
 If both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set, the plugin uses environment variables instead of reading the config file. Optional values can be supplied either way.
 
+## Tool Observation Names
+
+Skill and subagent tool observations include the skill name or subagent type so
+Langfuse dashboards can group and filter their metrics by observation name:
+
+- `skill` with input `{ "name": "resolve-dependencies" }` is named `skill:resolve-dependencies`.
+- `task` with input `{ "subagent_type": "developer" }` is named `task:developer`.
+
+Leading and trailing whitespace is trimmed from the name. Missing, blank, or
+non-string values fall back to `skill` or `task`. Other tool names are unchanged.
+The original tool input and the metadata `tool` field remain unchanged.
+
 ## Contributing
 
 See the [contributing guide](./CONTRIBUTING.md).

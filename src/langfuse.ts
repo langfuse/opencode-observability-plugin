@@ -939,10 +939,28 @@ export class LangfuseClient {
 
     this.ensureGenerationParent(input.sessionID);
 
+    let observationName = input.tool;
+    if (
+      typeof input.args === "object" &&
+      input.args !== null &&
+      !Array.isArray(input.args)
+    ) {
+      const semanticName =
+        input.tool === "skill" && "name" in input.args
+          ? input.args.name
+          : input.tool === "task" && "subagent_type" in input.args
+            ? input.args.subagent_type
+            : undefined;
+
+      if (typeof semanticName === "string" && semanticName.trim() !== "") {
+        observationName = `${input.tool}:${semanticName.trim()}`;
+      }
+    }
+
     this.withObservationParent(
       input.sessionID,
       () => {
-        const span = this.traceState.tracer.startSpan(input.tool, {
+        const span = this.traceState.tracer.startSpan(observationName, {
           attributes: {
             "langfuse.observation.type": "tool",
             "session.id": input.sessionID,

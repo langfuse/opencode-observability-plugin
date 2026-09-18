@@ -975,10 +975,12 @@ export class LangfuseClient {
 
     this.ensureGenerationParent(input.sessionID);
 
+    const observationName = this.getToolObservationName(input.tool, input.args);
+
     this.withObservationParent(
       input.sessionID,
       () => {
-        const span = this.traceState.tracer.startSpan(input.tool, {
+        const span = this.traceState.tracer.startSpan(observationName, {
           attributes: {
             "langfuse.observation.type": "tool",
             "session.id": input.sessionID,
@@ -1121,6 +1123,28 @@ export class LangfuseClient {
     this.traceState.activeToolObservations.delete(input.callID);
     this.traceState.finalizedToolCallIds.add(input.callID);
     this.traceState.toolMessageIdsByCallId.delete(input.callID);
+  }
+
+  // Include skill or subagent names for grouping, falling back to the tool name
+  // when arguments are missing or invalid. Preserve the original input data.
+  private getToolObservationName(tool: string, args: unknown) {
+    if (typeof args !== "object" || args === null || Array.isArray(args)) {
+      return tool;
+    }
+
+    const semanticName =
+      tool === "skill" && "name" in args
+        ? args.name
+        : tool === "task" && "subagent_type" in args
+          ? args.subagent_type
+          : undefined;
+
+    if (typeof semanticName !== "string") {
+      return tool;
+    }
+
+    const name = semanticName.trim();
+    return name === "" ? tool : `${tool}:${name}`;
   }
 
   private ensureGenerationParent(sessionID: string) {

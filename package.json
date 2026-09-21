@@ -1,6 +1,6 @@
 {
   "name": "@langfuse/opencode-observability-plugin",
-  "version": "0.5.0-rc.2",
+  "version": "0.5.0",
   "description": "OpenCode plugin that sends session telemetry to Langfuse.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

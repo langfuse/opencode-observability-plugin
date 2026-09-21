@@ -10,7 +10,7 @@ import SourcePlugin from "../../src/v2.js";
 const runtime = vi.hoisted(() => ({
   createLangfuseRuntime: vi.fn(),
   traceUserPrompt: vi.fn(),
-  setPendingToolDefinitions: vi.fn(),
+  setGenerationInputSnapshot: vi.fn(),
   rememberToolCall: vi.fn(),
   traceToolStart: vi.fn(),
   traceToolError: vi.fn(),
@@ -19,6 +19,7 @@ const runtime = vi.hoisted(() => ({
   startActiveGenerationStep: vi.fn(),
   traceGeneration: vi.fn(),
   traceFailedGenerationStep: vi.fn(),
+  traceSessionError: vi.fn(),
   traceEvent: vi.fn(),
   endActiveToolObservations: vi.fn(),
   endActiveGenerationSteps: vi.fn(),
@@ -80,10 +81,37 @@ describe("OpenCode 2 package entrypoint", () => {
           async *[Symbol.asyncIterator]() {
             await Promise.resolve();
             yield {
+              type: "session.step.started",
+              created: 100,
+              data: {
+                sessionID: "session-1",
+                assistantMessageID: "assistant-1",
+                agent: "build",
+                model: { id: "model-1", providerID: "provider-1" },
+                snapshot: "snapshot-1",
+              },
+            };
+            yield {
               type: "session.execution.failed",
               data: {
                 sessionID: "session-1",
                 error: { type: "TestError", message: "failed" },
+              },
+            };
+            yield {
+              type: "session.step.ended",
+              created: 200,
+              data: {
+                sessionID: "session-1",
+                assistantMessageID: "assistant-1",
+                finish: "stop",
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
               },
             };
           },
@@ -104,9 +132,11 @@ describe("OpenCode 2 package entrypoint", () => {
     expect(runtime.createLangfuseRuntime).toHaveBeenCalledWith({
       opencodeVersion: "2.0.4",
     });
-    expect(runtime.endActiveToolObservations).toHaveBeenCalledWith("session-1");
-    expect(runtime.endActiveGenerationSteps).toHaveBeenCalledWith("session-1");
-    expect(runtime.endActiveTurnObservations).toHaveBeenCalledWith("session-1");
+    expect(runtime.traceSessionError).toHaveBeenCalledWith({
+      sessionID: "session-1",
+      error: { name: "TestError", message: "failed" },
+    });
+    expect(runtime.traceGeneration).not.toHaveBeenCalled();
   });
 
   test("traces a complete session with prompt, text, reasoning, and tools", async () => {
@@ -260,6 +290,86 @@ describe("OpenCode 2 package entrypoint", () => {
         }),
       );
     });
+    await cleanup?.();
+  });
+
+  test("captures the complete model input from each context hook", async () => {
+    let context:
+      | ((input: {
+          sessionID: string;
+          system: unknown[];
+          messages: unknown[];
+          tools: Record<
+            string,
+            { description: string; input: Record<string, unknown> }
+          >;
+        }) => void)
+      | undefined;
+    const registration = { dispose: vi.fn(() => Promise.resolve()) };
+    const contextInput: unknown = {
+      app: { version: "2.0.4" },
+      session: {
+        hook: vi.fn((name: string, handler: typeof context) => {
+          if (name === "context") {
+            context = handler;
+          }
+          return Promise.resolve(registration);
+        }),
+      },
+      tool: { hook: vi.fn(() => Promise.resolve(registration)) },
+      event: {
+        subscribe: () => ({
+          async *[Symbol.asyncIterator]() {
+            await Promise.resolve();
+            yield* [];
+          },
+        }),
+      },
+    };
+    const pluginContext = Schema.decodeUnknownSync(
+      Schema.declare(
+        (input): input is Parameters<typeof SourcePlugin.setup>[0] =>
+          typeof input === "object" && input !== null,
+      ),
+    )(contextInput);
+
+    const cleanup = await SourcePlugin.setup(pluginContext);
+    await vi.waitFor(() => {
+      expect(context).toBeTypeOf("function");
+    });
+
+    const system = [{ type: "text", text: "System instructions" }];
+    const messages = [
+      { role: "user", content: [{ type: "text", text: "Earlier message" }] },
+      { role: "assistant", content: [{ type: "text", text: "Earlier reply" }] },
+    ];
+    context?.({
+      sessionID: "session-1",
+      system,
+      messages,
+      tools: {
+        read: {
+          description: "Read a file",
+          input: { type: "object", properties: {} },
+        },
+      },
+    });
+
+    expect(runtime.setGenerationInputSnapshot).toHaveBeenCalledWith(
+      "session-1",
+      {
+        system,
+        messages,
+        tools: [
+          {
+            name: "read",
+            description: "Read a file",
+            parameters: { type: "object", properties: {} },
+          },
+        ],
+      },
+    );
+
     await cleanup?.();
   });
 });

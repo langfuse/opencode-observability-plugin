@@ -42,6 +42,7 @@ export class LangfuseClient {
     this.traceState.toolMessageIdsByCallId.clear();
     this.traceState.generationParentSpans.clear();
     this.traceState.generationInputsBySession.clear();
+    this.traceState.generationInputSnapshotsBySession.clear();
     this.traceState.toolResultSourceMessageIdsBySession.clear();
     this.traceState.turnObservationsByMessageId.clear();
     this.traceState.latestTurnObservationsBySession.clear();
@@ -101,6 +102,7 @@ export class LangfuseClient {
     this.traceState.activeGenerationSteps.delete(sessionID);
     this.traceState.generationParentSpans.delete(sessionID);
     this.traceState.generationInputsBySession.delete(sessionID);
+    this.traceState.generationInputSnapshotsBySession.delete(sessionID);
     this.traceState.toolResultSourceMessageIdsBySession.delete(sessionID);
     this.traceState.latestTurnObservationsBySession.delete(sessionID);
     this.traceState.sessionHistories.delete(sessionID);
@@ -509,6 +511,10 @@ export class LangfuseClient {
       sessionID,
       withToolDefinitions(messages, tools),
     );
+  }
+
+  setGenerationInputSnapshot(sessionID: string, input: unknown) {
+    this.traceState.generationInputSnapshotsBySession.set(sessionID, input);
   }
 
   private traceFormattedUserMessage(input: {
@@ -1284,6 +1290,15 @@ export class LangfuseClient {
     sessionID: string,
     assistantMessageID?: string,
   ) {
+    const snapshot =
+      this.traceState.generationInputSnapshotsBySession.get(sessionID);
+    this.traceState.generationInputSnapshotsBySession.delete(sessionID);
+    if (snapshot !== undefined) {
+      this.traceState.generationInputsBySession.delete(sessionID);
+      this.traceState.toolResultSourceMessageIdsBySession.delete(sessionID);
+      return snapshot;
+    }
+
     const pending = this.traceState.generationInputsBySession.get(sessionID);
     const sourceMessageID =
       this.traceState.toolResultSourceMessageIdsBySession.get(sessionID);
@@ -1406,6 +1421,7 @@ export type LangfuseTraceState = {
   activeGenerationSteps: Map<string, ActiveGenerationStep>;
   generationParentSpans: Map<string, ApiSpan>;
   generationInputsBySession: Map<string, ChatMlMessage[]>;
+  generationInputSnapshotsBySession: Map<string, unknown>;
   toolResultSourceMessageIdsBySession: Map<string, string>;
   sessionParentIds: Map<string, string>;
   sessionHistories: Map<string, SessionHistory>;
@@ -1630,7 +1646,9 @@ type SessionError = Extract<
   { type: "session.error" }
 >["properties"]["error"];
 
-export type SessionErrorInfo = NonNullable<SessionError>;
+export type SessionErrorInfo =
+  | NonNullable<SessionError>
+  | { name: string; message?: string; data?: { message?: unknown } };
 
 type UserMessageInput = {
   role: "user";
@@ -1764,6 +1782,7 @@ export const createLangfuseClient = (input: {
       activeGenerationSteps: new Map<string, ActiveGenerationStep>(),
       generationParentSpans: new Map<string, ApiSpan>(),
       generationInputsBySession: new Map<string, ChatMlMessage[]>(),
+      generationInputSnapshotsBySession: new Map<string, unknown>(),
       toolResultSourceMessageIdsBySession: new Map<string, string>(),
       sessionParentIds: new Map<string, string>(),
       sessionHistories: new Map<string, SessionHistory>(),

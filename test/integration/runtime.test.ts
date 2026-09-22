@@ -6,7 +6,6 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 const originalEnvironment = {
   home: process.env.HOME,
-  userProfile: process.env.USERPROFILE,
   publicKey: process.env.LANGFUSE_PUBLIC_KEY,
   secretKey: process.env.LANGFUSE_SECRET_KEY,
 };
@@ -19,11 +18,6 @@ afterEach(async () => {
     delete process.env.HOME;
   } else {
     process.env.HOME = originalEnvironment.home;
-  }
-  if (originalEnvironment.userProfile === undefined) {
-    delete process.env.USERPROFILE;
-  } else {
-    process.env.USERPROFILE = originalEnvironment.userProfile;
   }
   if (originalEnvironment.publicKey === undefined) {
     delete process.env.LANGFUSE_PUBLIC_KEY;
@@ -48,7 +42,6 @@ describe("Langfuse runtime", () => {
     const { createLangfuseRuntime } = await import("../../src/runtime.js");
     temporaryHome = await mkdtemp(join(process.cwd(), ".test-runtime-"));
     process.env.HOME = temporaryHome;
-    process.env.USERPROFILE = temporaryHome;
     process.env.LANGFUSE_PUBLIC_KEY = "";
     process.env.LANGFUSE_SECRET_KEY = "";
 

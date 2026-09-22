@@ -1131,19 +1131,20 @@ export class LangfuseClient {
     this.traceState.toolMessageIdsByCallId.delete(input.callID);
   }
 
-  // Include skill or subagent names for grouping, falling back to the tool name
-  // when arguments are missing or invalid. Preserve the original input data.
+  // Use skill or subagent names when available; otherwise fall back to the tool name.
   private getToolObservationName(tool: string, args: unknown) {
     if (typeof args !== "object" || args === null || Array.isArray(args)) {
       return tool;
     }
 
-    const semanticName =
-      tool === "skill" && "name" in args
-        ? args.name
-        : tool === "task" && "subagent_type" in args
-          ? args.subagent_type
-          : undefined;
+    let semanticName: unknown;
+    if (tool === "skill" && "name" in args) {
+      semanticName = args.name;
+    } else if (tool === "task" && "subagent_type" in args) {
+      semanticName = args.subagent_type;
+    } else {
+      return tool;
+    }
 
     if (typeof semanticName !== "string") {
       return tool;

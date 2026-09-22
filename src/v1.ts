@@ -338,13 +338,13 @@ const normalizeToolResult = (tool: string, output: unknown) => {
 
 const main = Effect.gen(function* () {
   const opencode = yield* OpencodeClientService;
+  const disableTracing = (error: { readonly message: string }) =>
+    log("warn", `[Tracing disabled] ${error.message}`).pipe(
+      Effect.as(undefined),
+    );
 
   const langfuse = yield* createLangfuseRuntime({}).pipe(
-    Effect.catchTag("MissingLangfuseCredentials", (error) =>
-      log("warn", `[Tracing disabled] ${error.message}`).pipe(
-        Effect.as(undefined),
-      ),
-    ),
+    Effect.catchTag("MissingLangfuseCredentials", disableTracing),
   );
 
   if (!langfuse) {
@@ -397,14 +397,7 @@ const main = Effect.gen(function* () {
     dispose: () =>
       runHook(
         "dispose",
-        finalizeTracing.pipe(
-          Effect.zipRight(
-            Effect.tryPromise({
-              try: () => Effect.runPromise(langfuse.forceFlush),
-              catch: (error) => error,
-            }),
-          ),
-        ),
+        finalizeTracing.pipe(Effect.zipRight(langfuse.forceFlush)),
       ),
 
     event: ({ event }) => runHook("event", eventHook(event)),

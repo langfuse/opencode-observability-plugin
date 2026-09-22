@@ -1,9 +1,14 @@
-import { trace } from "@opentelemetry/api";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { Data, Effect, Schema } from "effect";
+import {
+  Data,
+  Effect,
+  Schema,
+  SynchronizedRef,
+  type SynchronizedRef as SynchronizedRefType,
+} from "effect";
 
 import { createLangfuseClient, type LangfuseClient } from "./langfuse.js";
 
@@ -20,6 +25,10 @@ type LangfuseCredentials = typeof LangfuseCredentialsSchema.Type;
 
 class MissingLangfuseCredentials extends Data.TaggedError(
   "MissingLangfuseCredentials",
+)<{ readonly message: string }> {}
+
+class ChangedLangfuseConfiguration extends Data.TaggedError(
+  "ChangedLangfuseConfiguration",
 )<{ readonly message: string }> {}
 
 const loadLangfuseCredentials = Effect.gen(function* () {
@@ -86,45 +95,26 @@ const loadLangfuseCredentials = Effect.gen(function* () {
  * the client that owns it: flushing or shutting down a second provider would
  * silently drop the session.
  *
- * The cache is keyed by the credentials and by the provider that is actually
- * registered, so a new client is still created when the global provider is
- * replaced (for example after trace.disable()).
+ * Symbol.for keeps the owner stable if the package is loaded more than once.
  */
-type DelegateHolder = { getDelegate: () => unknown };
+type SharedClientState =
+  | { readonly _tag: "Empty" }
+  | {
+      readonly _tag: "Ready";
+      readonly client: LangfuseClient;
+      readonly key: string;
+    };
 
-// The tracer provider returned by the API wraps the registered one; the type
-// does not expose the accessor, so narrow it structurally instead.
-const hasDelegate = (value: unknown): value is DelegateHolder =>
-  typeof value === "object" &&
-  value !== null &&
-  "getDelegate" in value &&
-  typeof value.getDelegate === "function";
-
-const registeredProvider = () => {
-  const global: unknown = trace.getTracerProvider();
-
-  return hasDelegate(global) ? global.getDelegate() : undefined;
-};
-
-let sharedClient: LangfuseClient | undefined;
-let sharedClientKey: string | undefined;
-let sharedClientProvider: unknown;
+declare global {
+  var langfuseOpencodeRuntimeState:
+    | SynchronizedRefType.SynchronizedRef<SharedClientState>
+    | undefined;
+}
 
 export const createLangfuseRuntime = (input: { opencodeVersion?: string }) =>
   Effect.gen(function* () {
     const credentials = yield* loadLangfuseCredentials;
-    const cacheKey = `${credentials.publicKey}@${credentials.baseUrl ?? ""}`;
-
-    if (
-      sharedClient !== undefined &&
-      sharedClientKey === cacheKey &&
-      sharedClientProvider === registeredProvider()
-    ) {
-      return sharedClient;
-    }
-
-    const providerBefore = registeredProvider();
-    const client = yield* createLangfuseClient({
+    const clientInput = {
       publicKey: credentials.publicKey,
       secretKey: credentials.secretKey,
       baseUrl:
@@ -139,13 +129,38 @@ export const createLangfuseRuntime = (input: { opencodeVersion?: string }) =>
       userId: credentials.userId ?? process.env.LANGFUSE_USER_ID,
       serviceName: credentials.serviceName ?? process.env.LANGFUSE_SERVICE_NAME,
       opencodeVersion: input.opencodeVersion,
-    });
+    } satisfies Parameters<typeof createLangfuseClient>[0];
+    const cacheKey = JSON.stringify(clientInput);
+    const sharedClientState =
+      globalThis.langfuseOpencodeRuntimeState ??
+      Effect.runSync(
+        SynchronizedRef.make<SharedClientState>({ _tag: "Empty" }),
+      );
+    globalThis.langfuseOpencodeRuntimeState = sharedClientState;
 
-    if (registeredProvider() !== providerBefore) {
-      sharedClient = client;
-      sharedClientKey = cacheKey;
-      sharedClientProvider = registeredProvider();
-    }
+    return yield* SynchronizedRef.modifyEffect(sharedClientState, (state) =>
+      Effect.gen(function* () {
+        if (state._tag === "Ready") {
+          if (state.key !== cacheKey) {
+            return yield* Effect.fail(
+              new ChangedLangfuseConfiguration({
+                message:
+                  "Langfuse configuration changed while the process-wide OpenTelemetry provider is active; restart OpenCode to apply it",
+              }),
+            );
+          }
 
-    return client;
+          return [state.client, state] as const;
+        }
+
+        const client = yield* createLangfuseClient(clientInput);
+        const nextState = {
+          _tag: "Ready",
+          client,
+          key: cacheKey,
+        } as const satisfies SharedClientState;
+
+        return [client, nextState] as const;
+      }),
+    );
   });

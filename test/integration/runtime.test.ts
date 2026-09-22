@@ -13,7 +13,11 @@ const originalEnvironment = {
 let temporaryHome: string | undefined;
 
 afterEach(async () => {
+  vi.doUnmock("@opentelemetry/api");
+  vi.doUnmock("../../src/langfuse.js");
+  vi.resetModules();
   vi.unstubAllGlobals();
+  globalThis.langfuseOpencodeRuntimeState = undefined;
   if (originalEnvironment.home === undefined) {
     delete process.env.HOME;
   } else {
@@ -37,6 +41,50 @@ afterEach(async () => {
 });
 
 describe("Langfuse runtime", () => {
+  test("creates one shared client for concurrent initialization", async () => {
+    const client = { id: "shared-client" };
+    let clientCreations = 0;
+
+    vi.doMock("../../src/langfuse.js", () => ({
+      createLangfuseClient: () =>
+        Effect.gen(function* () {
+          clientCreations += 1;
+          yield* Effect.sleep("10 millis");
+          return client;
+        }),
+    }));
+
+    process.env.LANGFUSE_PUBLIC_KEY = "pk-test";
+    process.env.LANGFUSE_SECRET_KEY = "sk-test";
+    const { createLangfuseRuntime } = await import("../../src/runtime.js");
+
+    const clients = await Effect.runPromise(
+      Effect.all([createLangfuseRuntime({}), createLangfuseRuntime({})], {
+        concurrency: "unbounded",
+      }),
+    );
+
+    expect(clientCreations).toBe(1);
+    expect(clients[0]).toBe(client);
+    expect(clients[1]).toBe(client);
+
+    vi.resetModules();
+    const reloadedRuntime = await import("../../src/runtime.js");
+    expect(
+      await Effect.runPromise(reloadedRuntime.createLangfuseRuntime({})),
+    ).toBe(client);
+    expect(clientCreations).toBe(1);
+
+    process.env.LANGFUSE_SECRET_KEY = "sk-changed";
+    const error = await Effect.runPromise(
+      Effect.flip(createLangfuseRuntime({})),
+    );
+
+    expect(error).toMatchObject({
+      _tag: "ChangedLangfuseConfiguration",
+    });
+  });
+
   test("does not accept empty environment credentials", async () => {
     vi.stubGlobal("__PLUGIN_VERSION__", "test");
     const { createLangfuseRuntime } = await import("../../src/runtime.js");

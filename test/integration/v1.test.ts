@@ -515,6 +515,7 @@ const disposeHooks = async () => {
     await hooks.dispose?.();
   } finally {
     trace.disable();
+    globalThis.langfuseOpencodeRuntimeState = undefined;
   }
 };
 
@@ -2590,6 +2591,19 @@ describe("built plugin", { concurrent: false }, () => {
     expect(await runTurn("dispose-keep-export-after")).not.toEqual([]);
   }, 15_000);
 
+  test("rejects a re-created instance when its configuration changed", async () => {
+    await hooks.dispose?.();
+    process.env.LANGFUSE_SECRET_KEY = "sk-changed";
+
+    try {
+      await expect(createHooks(collectorBaseUrl)).rejects.toThrow(
+        "Langfuse configuration changed while the process-wide OpenTelemetry provider is active; restart OpenCode to apply it",
+      );
+    } finally {
+      process.env.LANGFUSE_SECRET_KEY = "sk-test";
+    }
+  });
+
   test("keeps the new user message when the history refresh fails", async () => {
     // A snapshot from earlier in the same busy period does not contain a
     // request that arrives afterwards. If the refresh that would pick it up
@@ -2778,5 +2792,6 @@ describe("built plugin", { concurrent: false }, () => {
     await expect(hooks.dispose?.()).resolves.toBeUndefined();
     hooksDisposed = true;
     trace.disable();
+    globalThis.langfuseOpencodeRuntimeState = undefined;
   });
 });

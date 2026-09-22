@@ -26,7 +26,7 @@ const runtime = vi.hoisted(() => ({
   endActiveTurnObservations: vi.fn(),
   clearSessionTraceState: vi.fn(),
   clearTraceState: vi.fn(),
-  shutdown: vi.fn(),
+  forceFlush: vi.fn(),
 }));
 
 vi.mock("../../src/runtime.js", async () => {
@@ -37,10 +37,9 @@ vi.mock("../../src/runtime.js", async () => {
       runtime.createLangfuseRuntime(input);
       return Effect.succeed({
         ...runtime,
-        forceFlush: Effect.void,
+        forceFlush: Effect.sync(runtime.forceFlush),
       });
     },
-    createShutdownOnce: () => runtime.shutdown,
   };
 });
 
@@ -137,6 +136,37 @@ describe("OpenCode 2 package entrypoint", () => {
       error: { name: "TestError", message: "failed" },
     });
     expect(runtime.traceGeneration).not.toHaveBeenCalled();
+  });
+
+  test("keeps the shared runtime alive when an instance is disposed and re-created", async () => {
+    const registration = { dispose: vi.fn(() => Promise.resolve()) };
+    const contextInput: unknown = {
+      app: { version: "2.0.4" },
+      session: { hook: vi.fn(() => Promise.resolve(registration)) },
+      tool: { hook: vi.fn(() => Promise.resolve(registration)) },
+      event: {
+        subscribe: () => ({
+          async *[Symbol.asyncIterator]() {
+            await Promise.resolve();
+            yield* [];
+          },
+        }),
+      },
+    };
+    const context = Schema.decodeUnknownSync(
+      Schema.declare(
+        (input): input is Parameters<typeof SourcePlugin.setup>[0] =>
+          typeof input === "object" && input !== null,
+      ),
+    )(contextInput);
+
+    const firstCleanup = await SourcePlugin.setup(context);
+    await firstCleanup?.();
+    const secondCleanup = await SourcePlugin.setup(context);
+    await secondCleanup?.();
+
+    expect(runtime.createLangfuseRuntime).toHaveBeenCalledTimes(2);
+    expect(runtime.forceFlush).toHaveBeenCalledTimes(2);
   });
 
   test("traces a complete session with prompt, text, reasoning, and tools", async () => {

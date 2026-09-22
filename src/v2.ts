@@ -7,13 +7,14 @@ import { createLangfuseRuntime } from "./runtime.js";
 const LangfusePlugin = {
   id: "langfuse.observability",
   async setup(ctx) {
+    const disableTracing = (error: { readonly message: string }) =>
+      Effect.sync(() => {
+        console.warn(`[Langfuse tracing disabled] ${error.message}`);
+      }).pipe(Effect.as(undefined));
+
     const langfuse = await Effect.runPromise(
       createLangfuseRuntime({ opencodeVersion: ctx.app.version }).pipe(
-        Effect.catchTag("MissingLangfuseCredentials", (error) =>
-          Effect.sync(() => {
-            console.warn(`[Langfuse tracing disabled] ${error.message}`);
-          }).pipe(Effect.as(undefined)),
-        ),
+        Effect.catchTag("MissingLangfuseCredentials", disableTracing),
       ),
     );
     if (!langfuse) {

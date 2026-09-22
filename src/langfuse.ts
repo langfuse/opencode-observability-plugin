@@ -17,19 +17,16 @@ import { PLUGIN_VERSION } from "./version.js";
 export class LangfuseClient {
   readonly baseUrl: string;
   readonly forceFlush: Effect.Effect<void, unknown>;
-  readonly shutdown: Effect.Effect<void, unknown>;
   private readonly traceState: LangfuseTraceState;
 
   constructor(input: {
     baseUrl: string;
     traceState: LangfuseTraceState;
     forceFlush: Effect.Effect<void, unknown>;
-    shutdown: Effect.Effect<void, unknown>;
   }) {
     this.baseUrl = input.baseUrl;
     this.traceState = input.traceState;
     this.forceFlush = input.forceFlush;
-    this.shutdown = input.shutdown;
   }
 
   clearTraceState() {
@@ -1797,8 +1794,6 @@ export const createLangfuseClient = (input: {
         makeAppRootSpanProcessor(traceState.tracerName),
       ],
     });
-    let isShutdown = false;
-
     yield* Effect.sync(() => {
       provider.register();
     });
@@ -1806,19 +1801,6 @@ export const createLangfuseClient = (input: {
     return new LangfuseClient({
       baseUrl: input.baseUrl,
       traceState,
-      forceFlush: Effect.tryPromise(() =>
-        isShutdown ? Promise.resolve() : processor.forceFlush(),
-      ),
-      shutdown: Effect.gen(function* () {
-        if (isShutdown) {
-          return;
-        }
-
-        isShutdown = true;
-        yield* Effect.tryPromise(() => processor.forceFlush()).pipe(
-          Effect.catchAll(() => Effect.void),
-        );
-        yield* Effect.tryPromise(() => provider.shutdown());
-      }),
+      forceFlush: Effect.tryPromise(() => processor.forceFlush()),
     });
   });

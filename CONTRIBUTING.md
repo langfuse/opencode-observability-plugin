@@ -23,7 +23,7 @@ For OpenCode 2:
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["/path/to/langfuse-opencode/dist/index.js"],
+  "plugins": ["/path/to/langfuse-opencode/dist/v2"],
 }
 ```
 
@@ -55,7 +55,7 @@ Check formatting:
 pnpm run format:check
 ```
 
-tsdown bundles the combined plugin and its runtime dependencies into `dist/index.js`. OpenCode 1 calls its `server()` implementation and OpenCode 2 calls its `setup()` implementation. Version-specific entrypoints remain available at `dist/v1/index.js` and `dist/v2/index.js`. Do not edit generated files in `dist/` by hand.
+tsdown bundles the combined plugin and its runtime dependencies into `dist/index.js`. OpenCode 1 calls its `server()` implementation, while the OpenCode 2 local plugin loader uses the `dist/v2` directory and its `index.js` entrypoint. Version-specific entrypoints remain available at `dist/v1/index.js` and `dist/v2/index.js`. Do not edit generated files in `dist/` by hand.
 
 ## Releasing
 

@@ -1264,6 +1264,8 @@ describe("built plugin", { concurrent: false }, () => {
       { tool: "skill", args: { name: " \t " }, name: "skill" },
       { tool: "skill", args: { name: 42 }, name: "skill" },
       { tool: "skill", args: { name: ["review"] }, name: "skill" },
+      { tool: "skill", args: { id: "" }, name: "skill" },
+      { tool: "skill", args: { id: 42 }, name: "skill" },
       { tool: "skill", args: null, name: "skill" },
       { tool: "skill", args: "review", name: "skill" },
       { tool: "task", args: { name: "developer" }, name: "task" },
@@ -1277,6 +1279,11 @@ describe("built plugin", { concurrent: false }, () => {
         name: "read",
       },
       { tool: "skill", args: { name: " review " }, name: "skill:review" },
+      {
+        tool: "skill",
+        args: { id: " build-project " },
+        name: "skill:build-project",
+      },
       {
         tool: "task",
         args: { subagent_type: " developer " },

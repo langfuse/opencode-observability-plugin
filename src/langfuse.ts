@@ -1138,8 +1138,14 @@ export class LangfuseClient {
     }
 
     let semanticName: unknown;
-    if (tool === "skill" && "name" in args) {
-      semanticName = args.name;
+    if (tool === "skill") {
+      if ("name" in args && typeof args.name === "string") {
+        semanticName = args.name;
+      } else if ("id" in args) {
+        semanticName = args.id;
+      } else {
+        return tool;
+      }
     } else if (tool === "task" && "subagent_type" in args) {
       semanticName = args.subagent_type;
     } else {

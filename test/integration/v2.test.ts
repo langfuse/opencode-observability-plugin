@@ -296,7 +296,7 @@ describe("OpenCode 2 package entrypoint", () => {
   test.each([
     {
       tool: "skill",
-      input: { name: "resolve-dependencies" },
+      input: { id: "build-project" },
     },
     {
       tool: "task",

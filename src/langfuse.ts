@@ -1139,6 +1139,7 @@ export class LangfuseClient {
 
     let semanticName: unknown;
     if (tool === "skill") {
+      // OpenCode v1 sends the skill name; OpenCode v2 sends the skill id.
       if ("name" in args && typeof args.name === "string") {
         semanticName = args.name;
       } else if ("id" in args) {
@@ -1146,8 +1147,10 @@ export class LangfuseClient {
       } else {
         return tool;
       }
+      // OpenCode v1 represents subagent calls as task tools.
     } else if (tool === "task" && "subagent_type" in args) {
       semanticName = args.subagent_type;
+      // OpenCode v2 represents subagent calls as dedicated subagent tools.
     } else if (tool === "subagent" && "agent" in args) {
       semanticName = args.agent;
     } else {

@@ -302,6 +302,10 @@ describe("OpenCode 2 package entrypoint", () => {
       tool: "task",
       input: { subagent_type: "developer", prompt: "Fix the build" },
     },
+    {
+      tool: "subagent",
+      input: { agent: "ts-reviewer", prompt: "Review the build" },
+    },
   ])(
     "forwards semantic $tool input for observation naming",
     async (toolCall) => {

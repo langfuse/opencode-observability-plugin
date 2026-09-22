@@ -1148,6 +1148,8 @@ export class LangfuseClient {
       }
     } else if (tool === "task" && "subagent_type" in args) {
       semanticName = args.subagent_type;
+    } else if (tool === "subagent" && "agent" in args) {
+      semanticName = args.agent;
     } else {
       return tool;
     }

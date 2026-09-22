@@ -1273,6 +1273,9 @@ describe("built plugin", { concurrent: false }, () => {
       { tool: "task", args: { subagent_type: " \n " }, name: "task" },
       { tool: "task", args: { subagent_type: null }, name: "task" },
       { tool: "task", args: [], name: "task" },
+      { tool: "subagent", args: {}, name: "subagent" },
+      { tool: "subagent", args: { agent: "" }, name: "subagent" },
+      { tool: "subagent", args: { agent: 42 }, name: "subagent" },
       {
         tool: "read",
         args: { name: "README.md", subagent_type: "developer" },
@@ -1288,6 +1291,11 @@ describe("built plugin", { concurrent: false }, () => {
         tool: "task",
         args: { subagent_type: " developer " },
         name: "task:developer",
+      },
+      {
+        tool: "subagent",
+        args: { agent: " ts-reviewer " },
+        name: "subagent:ts-reviewer",
       },
     ];
     for (const [index, { tool, args }] of cases.entries()) {

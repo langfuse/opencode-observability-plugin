@@ -7,7 +7,7 @@ import {
   type ToolDefinition,
 } from "./langfuse.js";
 import { OpencodeClientService } from "./opencode.js";
-import { createLangfuseRuntime, createShutdownOnce } from "./runtime.js";
+import { createLangfuseRuntime } from "./runtime.js";
 import {
   McpContentSchema,
   McpToolResultSchema,
@@ -47,7 +47,7 @@ const refreshSessionHistory = (sessionID: string) =>
     langfuse.setSessionHistory(sessionID, buildSessionHistory(response.data));
   });
 
-const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
+const eventHook = (event: OpencodeEvent) =>
   Effect.gen(function* () {
     const langfuse = yield* LangfuseClientService;
 
@@ -73,12 +73,9 @@ const eventHook = (event: OpencodeEvent, shutdown?: () => Promise<void>) =>
     if (event.type === "server.instance.disposed") {
       finalizeSessionTracing();
 
-      if (shutdown) {
-        yield* Effect.tryPromise({
-          try: () => shutdown(),
-          catch: (error) => error,
-        });
-      }
+      // The tracer provider is process-wide and cannot be registered twice,
+      // so an instance disposal must not tear it down (see runtime.ts).
+      yield* langfuse.forceFlush;
     }
 
     if (event.type === "session.created" || event.type === "session.updated") {
@@ -341,13 +338,13 @@ const normalizeToolResult = (tool: string, output: unknown) => {
 
 const main = Effect.gen(function* () {
   const opencode = yield* OpencodeClientService;
+  const disableTracing = (error: { readonly message: string }) =>
+    log("warn", `[Tracing disabled] ${error.message}`).pipe(
+      Effect.as(undefined),
+    );
 
   const langfuse = yield* createLangfuseRuntime({}).pipe(
-    Effect.catchTag("MissingLangfuseCredentials", (error) =>
-      log("warn", `[Tracing disabled] ${error.message}`).pipe(
-        Effect.as(undefined),
-      ),
-    ),
+    Effect.catchTag("MissingLangfuseCredentials", disableTracing),
   );
 
   if (!langfuse) {
@@ -367,7 +364,6 @@ const main = Effect.gen(function* () {
     langfuse.endActiveTurnObservations();
     langfuse.clearTraceState();
   });
-  const shutdownOnce = createShutdownOnce(langfuse);
   const toolDefinitions = new Map<string, Promise<ToolDefinition[]>>();
 
   const runHook = (
@@ -401,17 +397,10 @@ const main = Effect.gen(function* () {
     dispose: () =>
       runHook(
         "dispose",
-        finalizeTracing.pipe(
-          Effect.zipRight(
-            Effect.tryPromise({
-              try: () => shutdownOnce(),
-              catch: (error) => error,
-            }),
-          ),
-        ),
+        finalizeTracing.pipe(Effect.zipRight(langfuse.forceFlush)),
       ),
 
-    event: ({ event }) => runHook("event", eventHook(event, shutdownOnce)),
+    event: ({ event }) => runHook("event", eventHook(event)),
 
     "chat.message": (input, output) =>
       runHook(

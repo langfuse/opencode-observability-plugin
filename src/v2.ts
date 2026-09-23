@@ -2,18 +2,19 @@ import type { Plugin } from "@opencode/plugin";
 import { Effect } from "effect";
 
 import type { ToolDefinition } from "./langfuse.js";
-import { createLangfuseRuntime, createShutdownOnce } from "./runtime.js";
+import { createLangfuseRuntime } from "./runtime.js";
 
 const LangfusePlugin = {
   id: "langfuse.observability",
   async setup(ctx) {
+    const disableTracing = (error: { readonly message: string }) =>
+      Effect.sync(() => {
+        console.warn(`[Langfuse tracing disabled] ${error.message}`);
+      }).pipe(Effect.as(undefined));
+
     const langfuse = await Effect.runPromise(
       createLangfuseRuntime({ opencodeVersion: ctx.app.version }).pipe(
-        Effect.catchTag("MissingLangfuseCredentials", (error) =>
-          Effect.sync(() => {
-            console.warn(`[Langfuse tracing disabled] ${error.message}`);
-          }).pipe(Effect.as(undefined)),
-        ),
+        Effect.catchTag("MissingLangfuseCredentials", disableTracing),
       ),
     );
     if (!langfuse) {
@@ -22,7 +23,6 @@ const LangfusePlugin = {
 
     const abort = new AbortController();
     const registrations: { dispose: () => Promise<void> }[] = [];
-    const shutdown = createShutdownOnce(langfuse);
     const userMessageIDs = new Map<string, string>();
     const generationDetails = new Map<
       string,
@@ -298,7 +298,9 @@ const LangfusePlugin = {
       langfuse.endActiveGenerationSteps();
       langfuse.endActiveTurnObservations();
       langfuse.clearTraceState();
-      await shutdown();
+      // The tracer provider is process-wide and cannot be registered twice,
+      // so an instance disposal must not tear it down (see runtime.ts).
+      await Effect.runPromise(langfuse.forceFlush);
     };
   },
 } satisfies Plugin.Plugin;

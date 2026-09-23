@@ -515,6 +515,7 @@ const disposeHooks = async () => {
     await hooks.dispose?.();
   } finally {
     trace.disable();
+    globalThis.langfuseOpencodeRuntimeState = undefined;
   }
 };
 
@@ -2563,6 +2564,46 @@ describe("built plugin", { concurrent: false }, () => {
     ]);
   });
 
+  test("keeps exporting spans after the instance is disposed and re-created", async () => {
+    // opencode disposes and re-creates plugin instances inside the same process
+    // (for example when the effective config changes) while the OTel tracer
+    // provider is registered process-wide. Exporting must survive that.
+    const runTurn = async (sessionID: string) => {
+      await sendUserMessage({
+        sessionID,
+        messageID: `${sessionID}-user`,
+        text: "Trace across a re-created instance",
+        started: startedAt,
+      });
+      const { requests: sessionRequests } = await flushSession(sessionID);
+      return sessionRequests;
+    };
+
+    expect(await runTurn("dispose-keep-export-before")).not.toEqual([]);
+
+    // What OpenCode does per instance on disposal. Deliberately no
+    // trace.disable() here: resetting the global provider hides the regression.
+    await hooks.dispose?.();
+
+    // OpenCode re-creates the plugin instance in the same process.
+    hooks = await createHooks(collectorBaseUrl);
+
+    expect(await runTurn("dispose-keep-export-after")).not.toEqual([]);
+  }, 15_000);
+
+  test("rejects a re-created instance when its configuration changed", async () => {
+    await hooks.dispose?.();
+    process.env.LANGFUSE_SECRET_KEY = "sk-changed";
+
+    try {
+      await expect(createHooks(collectorBaseUrl)).rejects.toThrow(
+        "Langfuse configuration changed while the process-wide OpenTelemetry provider is active; restart OpenCode to apply it",
+      );
+    } finally {
+      process.env.LANGFUSE_SECRET_KEY = "sk-test";
+    }
+  });
+
   test("keeps the new user message when the history refresh fails", async () => {
     // A snapshot from earlier in the same busy period does not contain a
     // request that arrives afterwards. If the refresh that would pick it up
@@ -2751,5 +2792,6 @@ describe("built plugin", { concurrent: false }, () => {
     await expect(hooks.dispose?.()).resolves.toBeUndefined();
     hooksDisposed = true;
     trace.disable();
+    globalThis.langfuseOpencodeRuntimeState = undefined;
   });
 });

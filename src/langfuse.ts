@@ -13,23 +13,32 @@ import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { Context as EffectContext, Effect } from "effect";
 
 import { PLUGIN_VERSION } from "./version.js";
+import { TelemetryRedaction, type RedactionConfig } from "./redaction.js";
 
 export class LangfuseClient {
   readonly baseUrl: string;
   readonly forceFlush: Effect.Effect<void, unknown>;
   private readonly traceState: LangfuseTraceState;
+  private readonly redaction: TelemetryRedaction;
 
   constructor(input: {
     baseUrl: string;
     traceState: LangfuseTraceState;
     forceFlush: Effect.Effect<void, unknown>;
+    redaction?: RedactionConfig;
   }) {
     this.baseUrl = input.baseUrl;
     this.traceState = input.traceState;
     this.forceFlush = input.forceFlush;
+    this.redaction = new TelemetryRedaction(input.redaction);
+  }
+
+  private serialize(value: unknown, sessionID?: string) {
+    return JSON.stringify(this.redaction.sanitize(value, sessionID));
   }
 
   clearTraceState() {
+    this.redaction.clear();
     this.traceState.assistantParts.clear();
     this.traceState.abortedSessions.clear();
     this.traceState.tracedEventIds.clear();
@@ -50,6 +59,7 @@ export class LangfuseClient {
   }
 
   clearSessionTraceState(sessionID: string) {
+    this.redaction.clearSession(sessionID);
     const sessionMessageIds = new Set<string>();
 
     for (const [messageID, parts] of this.traceState.assistantParts) {
@@ -236,11 +246,24 @@ export class LangfuseClient {
           "session.id": input.sessionID,
           ...(input.input === undefined
             ? {}
-            : { "langfuse.observation.input": JSON.stringify(input.input) }),
+            : {
+                "langfuse.observation.input": this.serialize(
+                  input.input,
+                  input.sessionID,
+                ),
+              }),
           ...(input.output === undefined
             ? {}
-            : { "langfuse.observation.output": JSON.stringify(input.output) }),
-          "langfuse.observation.metadata": JSON.stringify(input.metadata),
+            : {
+                "langfuse.observation.output": this.serialize(
+                  input.output,
+                  input.sessionID,
+                ),
+              }),
+          "langfuse.observation.metadata": this.serialize(
+            input.metadata,
+            input.sessionID,
+          ),
         },
         startTime: new Date(input.timestamp),
       });
@@ -443,7 +466,10 @@ export class LangfuseClient {
           "langfuse.observation.model.name": input.model.id,
           ...(generationInput
             ? {
-                "langfuse.observation.input": JSON.stringify(generationInput),
+                "langfuse.observation.input": this.serialize(
+                  generationInput,
+                  input.sessionID,
+                ),
               }
             : {}),
           "langfuse.observation.metadata": JSON.stringify({
@@ -573,7 +599,10 @@ export class LangfuseClient {
           "langfuse.observation.type": "agent",
           "langfuse.internal.is_app_root": !parentSpan,
           "session.id": input.sessionID,
-          "langfuse.observation.input": JSON.stringify([formattedMessage]),
+          "langfuse.observation.input": this.serialize(
+            [formattedMessage],
+            input.sessionID,
+          ),
           "langfuse.observation.metadata": JSON.stringify({
             messageID: input.messageID,
             agent: input.agent,
@@ -613,7 +642,10 @@ export class LangfuseClient {
             attributes: {
               "langfuse.observation.type": "event",
               "session.id": input.sessionID,
-              "langfuse.observation.input": JSON.stringify([formattedMessage]),
+              "langfuse.observation.input": this.serialize(
+                [formattedMessage],
+                input.sessionID,
+              ),
               "langfuse.observation.metadata": JSON.stringify({
                 messageID: input.messageID,
                 agent: input.agent,
@@ -660,6 +692,12 @@ export class LangfuseClient {
     tool: string;
     args: Record<string, unknown>;
   }) {
+    this.redaction.register(
+      input.callID,
+      input.tool,
+      input.args,
+      input.sessionID,
+    );
     this.traceState.toolMessageIdsByCallId.set(input.callID, input.messageID);
 
     const parts =
@@ -714,7 +752,7 @@ export class LangfuseClient {
     if (input.mode !== "compaction") {
       turn?.span.setAttribute(
         "langfuse.observation.output",
-        JSON.stringify(output),
+        this.serialize(output, input.sessionID),
       );
     }
     const activeStep = this.traceState.activeGenerationSteps.get(
@@ -731,7 +769,7 @@ export class LangfuseClient {
       step.span.setAttribute("langfuse.observation.model.name", input.modelID);
       step.span.setAttribute(
         "langfuse.observation.output",
-        JSON.stringify(output),
+        this.serialize(output, input.sessionID),
       );
       step.span.setAttribute(
         "langfuse.observation.usage_details",
@@ -795,10 +833,16 @@ export class LangfuseClient {
           "langfuse.observation.model.name": input.modelID,
           ...(generationInput
             ? {
-                "langfuse.observation.input": JSON.stringify(generationInput),
+                "langfuse.observation.input": this.serialize(
+                  generationInput,
+                  input.sessionID,
+                ),
               }
             : {}),
-          "langfuse.observation.output": JSON.stringify(output),
+          "langfuse.observation.output": this.serialize(
+            output,
+            input.sessionID,
+          ),
           "langfuse.observation.usage_details": JSON.stringify({
             input: input.tokens.input,
             output: input.tokens.output,
@@ -976,6 +1020,13 @@ export class LangfuseClient {
       return;
     }
 
+    this.redaction.register(
+      input.callID,
+      input.tool,
+      input.args,
+      input.sessionID,
+    );
+
     this.ensureGenerationParent(input.sessionID);
 
     this.withObservationParent(
@@ -985,7 +1036,10 @@ export class LangfuseClient {
           attributes: {
             "langfuse.observation.type": "tool",
             "session.id": input.sessionID,
-            "langfuse.observation.input": JSON.stringify(input.args),
+            "langfuse.observation.input": this.serialize(
+              this.redaction.toolInput(input.tool, input.args),
+              input.sessionID,
+            ),
             "langfuse.observation.metadata": JSON.stringify({
               callID: input.callID,
               tool: input.tool,
@@ -1041,7 +1095,13 @@ export class LangfuseClient {
 
     span.setAttribute(
       "langfuse.observation.output",
-      JSON.stringify({ title: input.title, output: input.output }),
+      this.serialize(
+        {
+          title: this.redaction.toolOutput(input.callID, input.title),
+          output: this.redaction.toolOutput(input.callID, input.output),
+        },
+        input.sessionID,
+      ),
     );
     span.setAttribute(
       "langfuse.observation.metadata",
@@ -1106,13 +1166,18 @@ export class LangfuseClient {
 
     span.setAttribute(
       "langfuse.observation.output",
-      JSON.stringify({ error: input.error }),
+      this.serialize(
+        { error: this.redaction.toolOutput(input.callID, input.error) },
+        observation.sessionID,
+      ),
     );
     span.setStatus({
       code: SpanStatusCode.ERROR,
-      message: input.error,
+      message: String(this.redaction.toolOutput(input.callID, input.error)),
     });
-    span.recordException({ message: input.error });
+    span.recordException({
+      message: String(this.redaction.toolOutput(input.callID, input.error)),
+    });
     span.end(new Date(input.completed));
     this.rememberToolResult({
       sessionID: observation.sessionID,
@@ -1146,7 +1211,10 @@ export class LangfuseClient {
           "session.id": sessionID,
           ...(generationInput
             ? {
-                "langfuse.observation.input": JSON.stringify(generationInput),
+                "langfuse.observation.input": this.serialize(
+                  generationInput,
+                  sessionID,
+                ),
               }
             : {}),
         },
@@ -1733,6 +1801,7 @@ export const createLangfuseClient = (input: {
   userId?: string;
   serviceName?: string;
   opencodeVersion?: string;
+  redaction?: RedactionConfig;
 }) =>
   Effect.gen(function* () {
     const tracerName = "opencode-langfuse-plugin";
@@ -1802,5 +1871,6 @@ export const createLangfuseClient = (input: {
       baseUrl: input.baseUrl,
       traceState,
       forceFlush: Effect.tryPromise(() => processor.forceFlush()),
+      redaction: input.redaction,
     });
   });

@@ -1,10 +1,13 @@
 import { readFileSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { IncomingHttpHeaders, Server } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { trace } from "@opentelemetry/api";
 import LangfusePlugin from "@langfuse/opencode-observability-plugin/v1";
-import { Schema } from "effect";
+import { Effect, Schema, SynchronizedRef } from "effect";
 import {
   afterAll,
   afterEach,
@@ -131,6 +134,7 @@ const packageJson = Schema.decodeUnknownSync(
 const packageVersion = packageJson.version;
 
 const originalEnvironment = {
+  home: process.env.HOME,
   publicKey: process.env.LANGFUSE_PUBLIC_KEY,
   secretKey: process.env.LANGFUSE_SECRET_KEY,
   baseUrl: process.env.LANGFUSE_BASE_URL,
@@ -147,6 +151,7 @@ let plugin: Plugin;
 let collectorStatus = 200;
 let hooksDisposed = false;
 let collectorBaseUrl: string;
+let temporaryHome: string;
 let toolListCalls = 0;
 let toolListShouldFail = false;
 
@@ -520,6 +525,18 @@ const disposeHooks = async () => {
 };
 
 beforeAll(async () => {
+  temporaryHome = await mkdtemp(join(tmpdir(), "langfuse-redaction-"));
+  const configDirectory = join(temporaryHome, ".config", "opencode");
+  await mkdir(configDirectory, { recursive: true });
+  await writeFile(
+    join(configDirectory, "opencode-langfuse.json"),
+    JSON.stringify({
+      redaction: {
+        tools: [{ name: "read", path: "**/.private", input: "redact" }],
+      },
+    }),
+  );
+  process.env.HOME = temporaryHome;
   server = createServer((request, response) => {
     const chunks: Buffer[] = [];
 
@@ -604,7 +621,9 @@ afterAll(async () => {
       });
     });
   } finally {
+    await rm(temporaryHome, { recursive: true, force: true });
     for (const [name, value] of Object.entries({
+      HOME: originalEnvironment.home,
       LANGFUSE_PUBLIC_KEY: originalEnvironment.publicKey,
       LANGFUSE_SECRET_KEY: originalEnvironment.secretKey,
       LANGFUSE_BASE_URL: originalEnvironment.baseUrl,
@@ -622,6 +641,199 @@ afterAll(async () => {
 });
 
 describe("built plugin", { concurrent: false }, () => {
+  test("exports redacted tool spans and later generation history", async () => {
+    const sessionID = "redaction-session";
+    const secret = "PASSWORD=not-for-export";
+    const path = "/repo/.private";
+    await sendUserMessage({
+      sessionID,
+      messageID: "redaction-user-1",
+      text: "Read the file",
+      started: startedAt,
+    });
+    await startGeneration({
+      id: "redaction-step-1",
+      sessionID,
+      assistantMessageID: "redaction-assistant-1",
+      started: startedAt + 100,
+    });
+    await hooks["tool.execute.before"]?.(
+      { sessionID, callID: "redaction-call", tool: "read" },
+      { args: { filePath: path } },
+    );
+    await hooks["tool.execute.after"]?.(
+      {
+        sessionID,
+        callID: "redaction-call",
+        tool: "read",
+        args: { filePath: path },
+      },
+      { title: "file", output: secret, metadata: {} },
+    );
+    await completeGeneration({
+      sessionID,
+      userMessageID: "redaction-user-1",
+      assistantMessageID: "redaction-assistant-1",
+      started: startedAt + 100,
+      completed: startedAt + 200,
+    });
+    storeMessage(sessionID, {
+      info: { id: "redaction-assistant-1", role: "assistant", sessionID },
+      parts: [
+        {
+          id: "redaction-tool-part",
+          sessionID,
+          messageID: "redaction-assistant-1",
+          type: "tool",
+          callID: "redaction-call",
+          tool: "read",
+          state: {
+            status: "completed",
+            input: { filePath: path },
+            output: secret,
+            title: "file",
+            metadata: {},
+            time: { start: startedAt + 120, end: startedAt + 150 },
+          },
+        },
+      ],
+    });
+    await sendUserMessage({
+      sessionID,
+      messageID: "redaction-user-2",
+      text: "What did you find?",
+      started: startedAt + 300,
+    });
+    await startGeneration({
+      id: "redaction-step-2",
+      sessionID,
+      assistantMessageID: "redaction-assistant-2",
+      started: startedAt + 400,
+    });
+    await completeGeneration({
+      sessionID,
+      userMessageID: "redaction-user-2",
+      assistantMessageID: "redaction-assistant-2",
+      started: startedAt + 400,
+      completed: startedAt + 500,
+      text: "Done",
+    });
+    const { requests: exportedRequests, spans } = await flushSession(sessionID);
+    const tool = getSessionSpan(spans, "read", sessionID);
+    expect(getJsonAttribute(tool, "langfuse.observation.input")).toBe(
+      "[REDACTED]",
+    );
+    expect(getJsonAttribute(tool, "langfuse.observation.output")).toEqual({
+      title: "[REDACTED]",
+      output: "[REDACTED]",
+    });
+    const generations = spans.filter(
+      (span) => span.name === "opencode.generation",
+    );
+    expect(generations).toHaveLength(2);
+    expect(
+      JSON.stringify(
+        getJsonAttribute(generations[1], "langfuse.observation.input"),
+      ),
+    ).toContain('"content":"[REDACTED]"');
+    expect(
+      JSON.stringify(exportedRequests.map((request) => request.body)),
+    ).not.toContain(secret);
+    expect(
+      JSON.stringify(exportedRequests.map((request) => request.body)),
+    ).not.toContain(path);
+  });
+
+  test("exports redacted OpenCode 2 context snapshots", async () => {
+    const sharedState = globalThis.langfuseOpencodeRuntimeState;
+    if (sharedState === undefined) {
+      throw new Error("Expected the shared Langfuse runtime");
+    }
+    const state = await Effect.runPromise(SynchronizedRef.get(sharedState));
+    if (state._tag !== "Ready") {
+      throw new Error("Expected a running Langfuse client");
+    }
+    const langfuse = state.client;
+    const sessionID = "redaction-v2-session";
+    const secret = "PASSWORD=v2-not-for-export";
+    langfuse.traceUserPrompt({
+      sessionID,
+      messageID: "redaction-v2-user",
+      content: [{ type: "text", text: "Check the file" }],
+    });
+    langfuse.setGenerationInputSnapshot(sessionID, {
+      system: [],
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              id: "redaction-v2-call",
+              name: "read",
+              input: { filePath: "/repo/.private" },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              id: "redaction-v2-call",
+              name: "read",
+              result: { type: "text", value: secret },
+            },
+          ],
+        },
+      ],
+      tools: [],
+    });
+    langfuse.startActiveGenerationStep({
+      sessionID,
+      assistantMessageID: "redaction-v2-assistant",
+      agent: "build",
+      model: { id: "test-model", providerID: "test-provider" },
+      started: startedAt,
+    });
+    langfuse.traceGeneration({
+      sessionID,
+      messageID: "redaction-v2-assistant",
+      parentID: "redaction-v2-user",
+      modelID: "test-model",
+      providerID: "test-provider",
+      mode: "build",
+      created: startedAt,
+      completed: startedAt + 100,
+      cost: 0,
+      tokens: {
+        input: 1,
+        output: 1,
+        reasoning: 0,
+        cache: { read: 0, write: 0 },
+      },
+      output: [{ role: "assistant", content: "Done" }],
+    });
+
+    const requestCount = requests.length;
+    await Effect.runPromise(langfuse.forceFlush);
+    const exportedRequests = requests.slice(requestCount);
+    const generation = getSessionSpan(
+      exportedRequests.flatMap(getSpans),
+      "opencode.generation",
+      sessionID,
+    );
+    const input = getJsonAttribute(generation, "langfuse.observation.input");
+    expect(JSON.stringify(input)).toContain('"result":"[REDACTED]"');
+    expect(JSON.stringify(input)).toContain('"input":"[REDACTED]"');
+    expect(
+      JSON.stringify(exportedRequests.map((request) => request.body)),
+    ).not.toContain(secret);
+    expect(
+      JSON.stringify(exportedRequests.map((request) => request.body)),
+    ).not.toContain("/repo/.private");
+  });
+
   test("resolves the OpenCode 1 package entrypoint", () => {
     expect(typeof LangfusePlugin).toBe("function");
   });

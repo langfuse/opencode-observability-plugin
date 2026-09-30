@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Effect } from "effect";
@@ -41,6 +41,75 @@ afterEach(async () => {
 });
 
 describe("Langfuse runtime", () => {
+  test("loads redaction rules alongside environment credentials", async () => {
+    const createClient = vi.fn(() =>
+      Effect.succeed({ id: "configured-client" }),
+    );
+    vi.doMock("../../src/langfuse.js", () => ({
+      createLangfuseClient: createClient,
+    }));
+    temporaryHome = await mkdtemp(join(process.cwd(), ".test-runtime-"));
+    const directory = join(temporaryHome, ".config", "opencode");
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      join(directory, "opencode-langfuse.json"),
+      JSON.stringify({
+        publicKey: "",
+        secretKey: false,
+        redaction: { tools: [{ name: "read", output: "redact" }] },
+      }),
+    );
+    process.env.HOME = temporaryHome;
+    process.env.LANGFUSE_PUBLIC_KEY = "pk-test";
+    process.env.LANGFUSE_SECRET_KEY = "sk-test";
+
+    const { createLangfuseRuntime } = await import("../../src/runtime.js");
+    await Effect.runPromise(createLangfuseRuntime({}));
+    expect(createClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        redaction: { tools: [{ name: "read", output: "redact" }] },
+      }),
+    );
+  });
+
+  test("rejects invalid redaction rules even with environment credentials", async () => {
+    const createClient = vi.fn(() => Effect.succeed({ id: "unused" }));
+    vi.doMock("../../src/langfuse.js", () => ({
+      createLangfuseClient: createClient,
+    }));
+    temporaryHome = await mkdtemp(join(process.cwd(), ".test-runtime-"));
+    const directory = join(temporaryHome, ".config", "opencode");
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      join(directory, "opencode-langfuse.json"),
+      JSON.stringify({
+        redaction: { tools: [{ name: "read", output: "typo" }] },
+      }),
+    );
+    process.env.HOME = temporaryHome;
+    process.env.LANGFUSE_PUBLIC_KEY = "pk-test";
+    process.env.LANGFUSE_SECRET_KEY = "sk-test";
+
+    const { createLangfuseRuntime } = await import("../../src/runtime.js");
+    const error = await Effect.runPromise(
+      Effect.flip(createLangfuseRuntime({})),
+    );
+    expect(error).toMatchObject({ _tag: "InvalidLangfuseConfiguration" });
+    expect(createClient).not.toHaveBeenCalled();
+
+    await writeFile(
+      join(directory, "opencode-langfuse.json"),
+      JSON.stringify({ redaction: { tool: [{ name: "read" }] } }),
+    );
+    const misspelledKey = await Effect.runPromise(
+      Effect.flip(createLangfuseRuntime({})),
+    );
+    expect(misspelledKey).toMatchObject({
+      _tag: "InvalidLangfuseConfiguration",
+    });
+    expect(createClient).not.toHaveBeenCalled();
+  });
+
   test("creates one shared client for concurrent initialization", async () => {
     const client = { id: "shared-client" };
     let clientCreations = 0;

@@ -16,6 +16,15 @@ const runtime = vi.hoisted(() => ({
   traceToolError: vi.fn(),
   traceToolEnd: vi.fn(),
   rememberSessionParent: vi.fn(),
+  rememberSessionMetadata: vi.fn(),
+  forgetSessionMetadata: vi.fn(),
+  loadSessionMetadata:
+    vi.fn<
+      (
+        sessionID: string,
+        read: (sessionID: string) => Promise<unknown>,
+      ) => Promise<void> | undefined
+    >(),
   startActiveGenerationStep: vi.fn(),
   traceGeneration: vi.fn(),
   traceFailedGenerationStep: vi.fn(),
@@ -167,6 +176,126 @@ describe("OpenCode 2 package entrypoint", () => {
 
     expect(runtime.createLangfuseRuntime).toHaveBeenCalledTimes(2);
     expect(runtime.forceFlush).toHaveBeenCalledTimes(2);
+  });
+
+  test("remembers session metadata until the session is deleted", async () => {
+    const registration = { dispose: vi.fn(() => Promise.resolve()) };
+    const contextInput: unknown = {
+      app: { version: "2.0.4" },
+      session: { hook: vi.fn(() => Promise.resolve(registration)) },
+      tool: { hook: vi.fn(() => Promise.resolve(registration)) },
+      event: {
+        subscribe: () => ({
+          async *[Symbol.asyncIterator]() {
+            await Promise.resolve();
+            yield {
+              type: "session.created",
+              data: {
+                sessionID: "session-1",
+                metadata: { userId: "user_01ABC" },
+              },
+            };
+            yield { type: "session.created", data: { sessionID: "session-2" } };
+            yield { type: "session.deleted", data: { sessionID: "session-1" } };
+          },
+        }),
+      },
+    };
+    const context = Schema.decodeUnknownSync(
+      Schema.declare(
+        (input): input is Parameters<typeof SourcePlugin.setup>[0] =>
+          typeof input === "object" && input !== null,
+      ),
+    )(contextInput);
+
+    const cleanup = await SourcePlugin.setup(context);
+    await cleanup?.();
+
+    expect(runtime.rememberSessionMetadata.mock.calls).toEqual([
+      [
+        {
+          sessionID: "session-1",
+          metadata: { userId: "user_01ABC" },
+        },
+      ],
+      [{ sessionID: "session-2" }],
+    ]);
+    expect(runtime.forgetSessionMetadata.mock.calls).toEqual([["session-1"]]);
+  });
+
+  test("reads a session's metadata before tracing its first span", async () => {
+    let prompt:
+      | ((input: {
+          sessionID: string;
+          messageID: string;
+          prompt: { text: string };
+        }) => Promise<void> | void)
+      | undefined;
+    const registration = { dispose: vi.fn(() => Promise.resolve()) };
+    const get = vi.fn((input: { sessionID: string }) =>
+      input.sessionID === "session-1"
+        ? Promise.resolve({
+            id: "session-1",
+            parentID: "session-0",
+            metadata: { userId: "user_01ABC" },
+          })
+        : Promise.reject(new Error("session unavailable")),
+    );
+    const contextInput: unknown = {
+      app: { version: "2.0.4" },
+      session: {
+        get,
+        hook: vi.fn((name: string, handler: typeof prompt) => {
+          if (name === "prompt") {
+            prompt = handler;
+          }
+          return Promise.resolve(registration);
+        }),
+      },
+      tool: { hook: vi.fn(() => Promise.resolve(registration)) },
+      event: {
+        subscribe: () => ({
+          async *[Symbol.asyncIterator]() {
+            await Promise.resolve();
+            yield* [];
+          },
+        }),
+      },
+    };
+    const context = Schema.decodeUnknownSync(
+      Schema.declare(
+        (input): input is Parameters<typeof SourcePlugin.setup>[0] =>
+          typeof input === "object" && input !== null,
+      ),
+    )(contextInput);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const cleanup = await SourcePlugin.setup(context);
+    await prompt?.({
+      sessionID: "session-1",
+      messageID: "user-1",
+      prompt: { text: "Say hello" },
+    });
+
+    expect(runtime.loadSessionMetadata).toHaveBeenCalledOnce();
+    expect(
+      runtime.loadSessionMetadata.mock.invocationCallOrder[0],
+    ).toBeLessThan(runtime.traceUserPrompt.mock.invocationCallOrder[0]);
+
+    const [sessionID, read] = runtime.loadSessionMetadata.mock.calls[0];
+    expect(sessionID).toBe("session-1");
+    await expect(read("session-1")).resolves.toEqual({
+      parentID: "session-0",
+      metadata: { userId: "user_01ABC" },
+    });
+    expect(get).toHaveBeenCalledWith({ sessionID: "session-1" });
+
+    // A session that cannot be read is traced without its metadata.
+    await expect(read("session-2")).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledOnce();
+
+    warn.mockRestore();
+    await cleanup?.();
   });
 
   test("traces a complete session with prompt, text, reasoning, and tools", async () => {

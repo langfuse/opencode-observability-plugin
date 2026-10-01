@@ -45,6 +45,8 @@ export class LangfuseClient {
     this.traceState.latestTurnObservationsBySession.clear();
     this.traceState.finalizedToolCallIds.clear();
     this.traceState.sessionParentIds.clear();
+    this.traceState.sessionUserIds.clear();
+    this.traceState.sessionMetadataLookups.clear();
     this.traceState.sessionHistories.clear();
     this.traceState.pendingUserMessageIdsBySession.clear();
   }
@@ -171,6 +173,13 @@ export class LangfuseClient {
   }
 
   endActiveTurnObservations(sessionID?: string) {
+    // The turn is over, so the next one may look the session up again.
+    if (sessionID == null) {
+      this.traceState.sessionMetadataLookups.clear();
+    } else {
+      this.traceState.sessionMetadataLookups.delete(sessionID);
+    }
+
     const observations = new Set([
       ...this.traceState.latestTurnObservationsBySession.values(),
       ...this.traceState.turnObservationsByMessageId.values(),
@@ -211,6 +220,103 @@ export class LangfuseClient {
     } else {
       this.traceState.sessionParentIds.delete(input.sessionID);
     }
+  }
+
+  rememberSessionMetadata(input: {
+    sessionID: string;
+    metadata?: Readonly<Record<string, unknown>>;
+  }) {
+    const userId = input.metadata?.userId;
+
+    this.traceState.sessionUserIds.set(
+      input.sessionID,
+      typeof userId === "string" && userId !== "" ? userId : undefined,
+    );
+  }
+
+  forgetSessionMetadata(sessionID: string) {
+    this.traceState.sessionUserIds.delete(sessionID);
+    this.traceState.sessionMetadataLookups.delete(sessionID);
+  }
+
+  // OpenCode announces session metadata only when a session is created or
+  // updated, so a session that was not announced to this client - it predates
+  // the plugin instance, or the trace state was cleared since - is read on
+  // demand, before its first span starts. Returns nothing when there is
+  // nothing to wait for.
+  loadSessionMetadata(
+    sessionID: string,
+    read: (sessionID: string) => Promise<
+      | {
+          parentID?: string;
+          metadata?: Readonly<Record<string, unknown>>;
+        }
+      | undefined
+    >,
+  ) {
+    if (this.getSessionWithoutMetadata(sessionID) === undefined) {
+      return undefined;
+    }
+
+    // One lookup per session and turn: concurrent hooks wait for the same one,
+    // and one that failed is repeated on the next turn instead of on every
+    // span of this one.
+    const lookup =
+      this.traceState.sessionMetadataLookups.get(sessionID) ??
+      this.lookUpSessionMetadata(sessionID, read);
+    this.traceState.sessionMetadataLookups.set(sessionID, lookup);
+
+    return lookup;
+  }
+
+  private async lookUpSessionMetadata(
+    sessionID: string,
+    read: Parameters<LangfuseClient["loadSessionMetadata"]>[1],
+  ) {
+    for (
+      let unknown = this.getSessionWithoutMetadata(sessionID);
+      unknown !== undefined;
+      unknown = this.getSessionWithoutMetadata(sessionID)
+    ) {
+      const info = await read(unknown);
+
+      if (info === undefined) {
+        return;
+      }
+
+      // A session event may have announced it while the read was in flight.
+      if (!this.traceState.sessionUserIds.has(unknown)) {
+        this.rememberSessionParent({
+          sessionID: unknown,
+          parentSessionID: info.parentID,
+        });
+        this.rememberSessionMetadata({
+          sessionID: unknown,
+          metadata: info.metadata,
+        });
+      }
+    }
+  }
+
+  // The first session, from the given one up through its parents, whose
+  // metadata is not known. A child inherits from its parents, and the parent
+  // links are only known for sessions whose metadata is.
+  private getSessionWithoutMetadata(sessionID: string) {
+    const visited = new Set<string>();
+
+    for (
+      let current: string | undefined = sessionID;
+      current !== undefined && !visited.has(current);
+      current = this.traceState.sessionParentIds.get(current)
+    ) {
+      if (!this.traceState.sessionUserIds.has(current)) {
+        return current;
+      }
+
+      visited.add(current);
+    }
+
+    return undefined;
   }
 
   traceEvent(input: {
@@ -919,6 +1025,8 @@ export class LangfuseClient {
   }
 
   traceSessionError(input: { sessionID: string; error?: SessionErrorInfo }) {
+    // Ends the turn as well, see endActiveTurnObservations.
+    this.traceState.sessionMetadataLookups.delete(input.sessionID);
     this.endActiveToolObservations(input.sessionID, input.error);
     this.endActiveGenerationSteps(input.sessionID, input.error);
 
@@ -1397,6 +1505,10 @@ export type LangfuseTraceState = {
   generationInputSnapshotsBySession: Map<string, unknown>;
   toolResultSourceMessageIdsBySession: Map<string, string>;
   sessionParentIds: Map<string, string>;
+  // Outlives a turn: session.idle must not drop it, later turns still need it.
+  // A session without a user keeps an undefined entry, so it is not read again.
+  sessionUserIds: Map<string, string | undefined>;
+  sessionMetadataLookups: Map<string, Promise<void>>;
   sessionHistories: Map<string, SessionHistory>;
   pendingUserMessageIdsBySession: Map<string, string>;
 };
@@ -1684,6 +1796,34 @@ const makeUserIdSpanProcessor = (userId: string) =>
     forceFlush: () => Promise.resolve(),
   }) satisfies SpanProcessor;
 
+// Registered after makeUserIdSpanProcessor so that a session's own user outranks
+// the process-wide one. A child session's spans join its parent's trace, so it
+// inherits its parent's user unless its own metadata sets one.
+const makeSessionUserIdSpanProcessor = (traceState: LangfuseTraceState) =>
+  ({
+    onStart: (span: Span) => {
+      const visited = new Set<string>();
+
+      for (
+        let sessionID = span.attributes["session.id"];
+        typeof sessionID === "string" && !visited.has(sessionID);
+        sessionID = traceState.sessionParentIds.get(sessionID)
+      ) {
+        const userId = traceState.sessionUserIds.get(sessionID);
+
+        if (userId !== undefined) {
+          span.setAttribute("langfuse.user.id", userId);
+          return;
+        }
+
+        visited.add(sessionID);
+      }
+    },
+    onEnd: () => undefined,
+    shutdown: () => Promise.resolve(),
+    forceFlush: () => Promise.resolve(),
+  }) satisfies SpanProcessor;
+
 const makePluginVersionSpanProcessor = () =>
   ({
     onStart: (span: Span) => {
@@ -1758,6 +1898,8 @@ export const createLangfuseClient = (input: {
       generationInputSnapshotsBySession: new Map<string, unknown>(),
       toolResultSourceMessageIdsBySession: new Map<string, string>(),
       sessionParentIds: new Map<string, string>(),
+      sessionUserIds: new Map<string, string | undefined>(),
+      sessionMetadataLookups: new Map<string, Promise<void>>(),
       sessionHistories: new Map<string, SessionHistory>(),
       pendingUserMessageIdsBySession: new Map<string, string>(),
     };
@@ -1790,6 +1932,7 @@ export const createLangfuseClient = (input: {
         ...(input.userId != null
           ? [makeUserIdSpanProcessor(input.userId)]
           : []),
+        makeSessionUserIdSpanProcessor(traceState),
         processor,
         makeAppRootSpanProcessor(traceState.tracerName),
       ],

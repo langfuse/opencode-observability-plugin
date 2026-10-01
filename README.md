@@ -62,6 +62,20 @@ export LANGFUSE_USER_ID="your-user-id"
 
 If both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set, the plugin uses environment variables instead of reading the config file. Optional values can be supplied either way.
 
+## Per-Session User
+
+`userId` and `LANGFUSE_USER_ID` apply to the whole OpenCode process. When one process hosts sessions for several people, for example behind `opencode serve`, set the user on the session instead by creating it with session metadata, for example `POST /session` with:
+
+```json
+{
+  "metadata": { "userId": "user_01ABC" }
+}
+```
+
+`metadata.userId` becomes the Langfuse user of every span of that session. It takes precedence over the process-wide user, which still applies to sessions without it. It must be a non-empty string; anything else is ignored. Child agent sessions inherit the user of their parent session.
+
+The plugin takes the metadata from OpenCode's session events. For a session it has not seen an event for, such as one continued after OpenCode was restarted, it reads the session from OpenCode before tracing its first span. If that read fails, the turn is traced with the process-wide user and the read is repeated on the session's next turn.
+
 ## Contributing
 
 See the [contributing guide](./CONTRIBUTING.md).

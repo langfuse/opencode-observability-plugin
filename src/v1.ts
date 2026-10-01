@@ -12,6 +12,7 @@ import {
   McpContentSchema,
   McpToolResultSchema,
   NativeToolResultSchema,
+  SessionInfoSchema,
   type OpencodeEvent,
 } from "./schema.js";
 import { log } from "./utils.js";
@@ -45,6 +46,48 @@ const refreshSessionHistory = (sessionID: string) =>
     }
 
     langfuse.setSessionHistory(sessionID, buildSessionHistory(response.data));
+  });
+
+const decodeSessionMetadata = (info: unknown) =>
+  Schema.decodeUnknownOption(SessionInfoSchema)(info).pipe(
+    Option.getOrUndefined,
+  )?.metadata;
+
+const loadSessionMetadata = (sessionID: string) =>
+  Effect.gen(function* () {
+    const opencode = yield* OpencodeClientService;
+    const langfuse = yield* LangfuseClientService;
+    const lookup = langfuse.loadSessionMetadata(sessionID, (id) =>
+      Effect.runPromise(
+        Effect.tryPromise({
+          try: () => opencode.session.get({ path: { id } }),
+          catch: (error) => error,
+        }).pipe(
+          Effect.flatMap((response) =>
+            response.data === undefined
+              ? Effect.fail(response.error)
+              : Effect.succeed({
+                  parentID: response.data.parentID,
+                  metadata: decodeSessionMetadata(response.data),
+                }),
+          ),
+          Effect.catchAll((error) =>
+            log(
+              "warn",
+              `Reading session ${id} failed: ${formatHookError(error)}; tracing it without its session metadata`,
+            ).pipe(
+              Effect.catchAll(() => Effect.void),
+              Effect.as(undefined),
+            ),
+          ),
+          Effect.provideService(OpencodeClientService, opencode),
+        ),
+      ),
+    );
+
+    if (lookup !== undefined) {
+      yield* Effect.promise(() => lookup);
+    }
   });
 
 const eventHook = (event: OpencodeEvent) =>
@@ -83,12 +126,17 @@ const eventHook = (event: OpencodeEvent) =>
         sessionID: event.properties.info.id,
         parentSessionID: event.properties.info.parentID,
       });
+      langfuse.rememberSessionMetadata({
+        sessionID: event.properties.info.id,
+        metadata: decodeSessionMetadata(event.properties.info),
+      });
     }
 
     if (event.type === "session.deleted") {
       langfuse.rememberSessionParent({
         sessionID: event.properties.info.id,
       });
+      langfuse.forgetSessionMetadata(event.properties.info.id);
     }
 
     if (event.type === "session.error" && event.properties.sessionID != null) {
@@ -103,6 +151,10 @@ const eventHook = (event: OpencodeEvent) =>
 
       langfuse.rememberAssistantPart(part);
       langfuse.traceReasoningPart(part);
+
+      if (part.type === "tool") {
+        yield* loadSessionMetadata(part.sessionID);
+      }
 
       if (part.type === "tool" && part.state.status === "running") {
         langfuse.traceToolStart({
@@ -185,6 +237,7 @@ const eventHook = (event: OpencodeEvent) =>
     }
 
     if (event.type === "session.next.retried") {
+      yield* loadSessionMetadata(event.properties.sessionID);
       langfuse.traceEvent({
         id: event.id,
         sessionID: event.properties.sessionID,
@@ -220,6 +273,7 @@ const eventHook = (event: OpencodeEvent) =>
             }
           : { include: event.properties.include };
 
+      yield* loadSessionMetadata(event.properties.sessionID);
       langfuse.traceEvent({
         id: event.id,
         sessionID: event.properties.sessionID,
@@ -406,6 +460,8 @@ const main = Effect.gen(function* () {
       runHook(
         "chat.message",
         Effect.gen(function* () {
+          yield* loadSessionMetadata(input.sessionID);
+
           let tools: ToolDefinition[] | undefined;
 
           if (input.model) {
@@ -466,23 +522,29 @@ const main = Effect.gen(function* () {
     "tool.execute.before": (input, output) =>
       runHook(
         "tool.execute.before",
-        Effect.try({
-          try: () => {
-            langfuse.traceToolStart({
-              sessionID: input.sessionID,
-              callID: input.callID,
-              tool: input.tool,
-              args: output.args,
-            });
-          },
-          catch: (error) => error,
-        }),
+        loadSessionMetadata(input.sessionID).pipe(
+          Effect.zipRight(
+            Effect.try({
+              try: () => {
+                langfuse.traceToolStart({
+                  sessionID: input.sessionID,
+                  callID: input.callID,
+                  tool: input.tool,
+                  args: output.args,
+                });
+              },
+              catch: (error) => error,
+            }),
+          ),
+        ),
       ),
 
     "tool.execute.after": (input, output) =>
       runHook(
         "tool.execute.after",
         Effect.gen(function* () {
+          yield* loadSessionMetadata(input.sessionID);
+
           const normalized = normalizeToolResult(input.tool, output);
 
           if (normalized.unexpected) {

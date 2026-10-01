@@ -256,6 +256,15 @@ export type OpencodeEvent =
   | Parameters<NonNullable<Hooks["event"]>>[0]["event"]
   | SessionNextEvent;
 
+// The Session type of the pinned @opencode-ai/plugin version omits metadata,
+// which OpenCode includes in the session info of its session events.
+// https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/session/session.ts#L222-L244
+export const SessionInfoSchema = Schema.Struct({
+  metadata: Schema.optional(
+    Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  ),
+});
+
 // https://github.com/anomalyco/opencode/blob/v1.18.19/packages/opencode/src/tool/tool.ts#L48-L53
 export const NativeToolResultSchema = Schema.Struct({
   title: Schema.String,

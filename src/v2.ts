@@ -37,8 +37,24 @@ const LangfusePlugin = {
       }
     >();
 
+    const loadSessionMetadata = (sessionID: string) =>
+      langfuse.loadSessionMetadata(sessionID, async (id) => {
+        try {
+          const info = await ctx.session.get({ sessionID: id });
+
+          return { parentID: info.parentID, metadata: info.metadata };
+        } catch (error) {
+          console.warn(
+            `Langfuse could not read session ${id}: ${String(error)}; tracing it without its session metadata`,
+          );
+
+          return undefined;
+        }
+      });
+
     registrations.push(
-      await ctx.session.hook("prompt", (input) => {
+      await ctx.session.hook("prompt", async (input) => {
+        await loadSessionMetadata(input.sessionID);
         userMessageIDs.set(input.sessionID, input.messageID);
         langfuse.traceUserPrompt({
           sessionID: input.sessionID,
@@ -77,7 +93,8 @@ const LangfusePlugin = {
     );
 
     registrations.push(
-      await ctx.tool.hook("execute.before", (input) => {
+      await ctx.tool.hook("execute.before", async (input) => {
+        await loadSessionMetadata(input.sessionID);
         generationDetails.get(input.messageID)?.toolCalls.set(input.id, {
           id: input.id,
           name: input.tool,
@@ -104,7 +121,8 @@ const LangfusePlugin = {
     );
 
     registrations.push(
-      await ctx.tool.hook("execute.after", (input) => {
+      await ctx.tool.hook("execute.after", async (input) => {
+        await loadSessionMetadata(input.sessionID);
         if (input.status === "error") {
           langfuse.traceToolError({
             sessionID: input.sessionID,
@@ -147,6 +165,10 @@ const LangfusePlugin = {
             langfuse.rememberSessionParent({
               sessionID: event.data.sessionID,
               parentSessionID: event.data.parentID,
+            });
+            langfuse.rememberSessionMetadata({
+              sessionID: event.data.sessionID,
+              metadata: event.data.metadata,
             });
           }
 
@@ -236,6 +258,7 @@ const LangfusePlugin = {
           }
 
           if (event.type === "session.retry.scheduled") {
+            await loadSessionMetadata(event.data.sessionID);
             langfuse.traceEvent({
               id: event.id,
               sessionID: event.data.sessionID,
@@ -279,6 +302,7 @@ const LangfusePlugin = {
 
           if (event.type === "session.deleted") {
             langfuse.clearSessionTraceState(event.data.sessionID);
+            langfuse.forgetSessionMetadata(event.data.sessionID);
           }
         }
       } catch (error) {

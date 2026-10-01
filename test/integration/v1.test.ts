@@ -26,6 +26,13 @@ const OtlpValueSchema = Schema.Struct({
   stringValue: Schema.optional(Schema.String),
   boolValue: Schema.optional(Schema.Boolean),
   intValue: Schema.optional(Schema.Number),
+  arrayValue: Schema.optional(
+    Schema.Struct({
+      values: Schema.Array(
+        Schema.Struct({ stringValue: Schema.optional(Schema.String) }),
+      ),
+    }),
+  ),
 });
 const OtlpAttributeSchema = Schema.Struct({
   key: Schema.String,
@@ -74,9 +81,17 @@ type CapturedRequest = {
 type Plugin = (typeof import("../../src/v1.js"))["default"];
 type PluginHooks = Awaited<ReturnType<Plugin>>;
 type PluginEvent = Parameters<NonNullable<PluginHooks["event"]>>[0]["event"];
+type SessionInfo = Extract<
+  PluginEvent,
+  { type: "session.created" }
+>["properties"]["info"] & { metadata?: Record<string, unknown> };
 type TestPluginEvent =
   | PluginEvent
   | SessionNextEvent
+  | {
+      type: "session.created" | "session.updated" | "session.deleted";
+      properties: { info: SessionInfo };
+    }
   | {
       type: "session.error";
       properties: {
@@ -184,6 +199,35 @@ type StoredMessage = {
 };
 const sessionStore = new Map<string, StoredMessage[]>();
 let sessionMessagesShouldFail = false;
+
+// Stands in for OpenCode's session table, which session.get() serves. Like the
+// message store it outlives the plugin. A session no test stored exists
+// without metadata.
+const sessionInfos = new Map<string, SessionInfo>();
+const sessionGetCalls: string[] = [];
+let sessionGetFailure: "rejected" | "not-found" | undefined;
+const logs: { level: string; message: string }[] = [];
+
+const storeSession = (input: {
+  sessionID: string;
+  parentID?: string;
+  metadata?: Record<string, unknown>;
+}) => {
+  const info: SessionInfo = {
+    id: input.sessionID,
+    projectID: "test-project",
+    directory: "/test",
+    parentID: input.parentID,
+    title: "Test session",
+    version: "1.18.29",
+    time: { created: startedAt, updated: startedAt },
+    ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+  };
+
+  sessionInfos.set(input.sessionID, info);
+
+  return info;
+};
 
 const storeMessage = (sessionID: string, message: StoredMessage) => {
   const messages = sessionStore.get(sessionID) ?? [];
@@ -456,13 +500,121 @@ const completeGeneration = async (input: {
   });
 };
 
+const emitSessionEvent = async (input: {
+  type: "session.created" | "session.updated" | "session.deleted";
+  sessionID: string;
+  parentID?: string;
+  metadata?: Record<string, unknown>;
+}) => {
+  const info = storeSession(input);
+
+  if (input.type === "session.deleted") {
+    sessionInfos.delete(input.sessionID);
+  }
+
+  await emitEvent({ type: input.type, properties: { info } });
+};
+
+// One turn that emits every kind of span the plugin produces.
+const sessionTurnSpanNames = [
+  "opencode.generation",
+  "opencode.generation.retry",
+  "opencode.message.user",
+  "opencode.turn",
+  "read",
+];
+
+const runSessionTurn = async (sessionID: string, turn = "turn-1") => {
+  const userMessageID = `${sessionID}-${turn}-user`;
+  const callID = `${sessionID}-${turn}-call`;
+
+  await sendUserMessage({
+    sessionID,
+    messageID: userMessageID,
+    text: "Inspect the repository",
+    started: startedAt,
+  });
+  await startGeneration({
+    id: `${sessionID}-${turn}-step`,
+    sessionID,
+    started: startedAt + 100,
+  });
+  await hooks["tool.execute.before"]?.(
+    { sessionID, callID, tool: "read" },
+    { args: { path: "README.md" } },
+  );
+  await hooks["tool.execute.after"]?.(
+    { sessionID, callID, tool: "read", args: { path: "README.md" } },
+    { title: "README.md", output: "# Project", metadata: {} },
+  );
+  await emitEvent({
+    id: `${sessionID}-${turn}-retry`,
+    type: "session.next.retried",
+    properties: {
+      sessionID,
+      timestamp: startedAt + 300,
+      attempt: 2,
+      error: { message: "temporary failure", isRetryable: true },
+    },
+  });
+  await completeGeneration({
+    sessionID,
+    userMessageID,
+    assistantMessageID: `${sessionID}-${turn}-assistant`,
+    started: startedAt + 100,
+    completed: startedAt + 800,
+    text: "Repository inspected",
+  });
+};
+
+const expectSessionSpans = (
+  spans: OtlpSpan[],
+  sessionID: string,
+  expected: { userId?: string },
+) => {
+  const sessionSpans = spans.filter(
+    (span) => getAttributes(span)["session.id"] === sessionID,
+  );
+
+  expect(sessionSpans.map((span) => span.name).sort()).toEqual(
+    sessionTurnSpanNames,
+  );
+  for (const span of sessionSpans) {
+    expect({
+      span: span.name,
+      userId: getAttributes(span)["langfuse.user.id"],
+    }).toEqual({ span: span.name, ...expected });
+  }
+};
+
 const createHooks = async (baseUrl: string) => {
   process.env.LANGFUSE_BASE_URL = baseUrl;
   const client = Schema.decodeUnknownSync(PluginClientSchema)({
     app: {
-      log: () => Promise.resolve(),
+      log: ({ body }: { body: { level: string; message: string } }) => {
+        logs.push({ level: body.level, message: body.message });
+
+        return Promise.resolve();
+      },
     },
     session: {
+      get: ({ path }: { path: { id: string } }) => {
+        sessionGetCalls.push(path.id);
+
+        if (sessionGetFailure === "rejected") {
+          return Promise.reject(new Error("session.get unavailable"));
+        }
+
+        return Promise.resolve(
+          sessionGetFailure === "not-found"
+            ? { data: undefined, error: { name: "NotFoundError" } }
+            : {
+                data:
+                  sessionInfos.get(path.id) ??
+                  storeSession({ sessionID: path.id }),
+              },
+        );
+      },
       messages: ({ path }: { path: { id: string } }) =>
         sessionMessagesShouldFail
           ? Promise.reject(new Error("session.messages unavailable"))
@@ -585,6 +737,10 @@ beforeEach(async () => {
   toolListCalls = 0;
   toolListShouldFail = false;
   sessionMessagesShouldFail = false;
+  sessionInfos.clear();
+  sessionGetCalls.length = 0;
+  sessionGetFailure = undefined;
+  logs.length = 0;
   hooks = await createHooks(collectorBaseUrl);
 });
 
@@ -1338,6 +1494,340 @@ describe("built plugin", { concurrent: false }, () => {
     expect(
       getJsonAttribute(parentGeneration, "langfuse.observation.output"),
     ).toEqual([{ role: "assistant", content: "Parent result" }]);
+  });
+
+  test("attributes a session's spans to the user in its session metadata", async () => {
+    const sessionID = "session-user-session";
+
+    await emitSessionEvent({
+      type: "session.created",
+      sessionID,
+      metadata: { userId: "user_01ABC" },
+    });
+    await runSessionTurn(sessionID);
+
+    // LANGFUSE_USER_ID is "test-user" here; the session metadata outranks it.
+    expectSessionSpans((await flushSession(sessionID)).spans, sessionID, {
+      userId: "user_01ABC",
+    });
+  });
+
+  test("keeps concurrent sessions attributed to their own users", async () => {
+    const sessions = [
+      { sessionID: "concurrent-user-session-1", userId: "user_01ABC" },
+      { sessionID: "concurrent-user-session-2", userId: "user_02XYZ" },
+    ];
+    const anonymousSessionID = "concurrent-anonymous-session";
+
+    for (const { sessionID, userId } of sessions) {
+      await emitSessionEvent({
+        type: "session.created",
+        sessionID,
+        metadata: { userId },
+      });
+    }
+    await emitSessionEvent({
+      type: "session.created",
+      sessionID: anonymousSessionID,
+    });
+    await Promise.all(
+      [...sessions.map(({ sessionID }) => sessionID), anonymousSessionID].map(
+        (sessionID) => runSessionTurn(sessionID),
+      ),
+    );
+
+    const spans = [
+      ...(await flushSession(sessions[0].sessionID)).spans,
+      ...(await flushSession(sessions[1].sessionID)).spans,
+      ...(await flushSession(anonymousSessionID)).spans,
+    ];
+
+    for (const { sessionID, userId } of sessions) {
+      expectSessionSpans(spans, sessionID, { userId });
+    }
+    // Without session metadata the process-wide LANGFUSE_USER_ID still applies.
+    expectSessionSpans(spans, anonymousSessionID, { userId: "test-user" });
+  });
+
+  test("ignores a session user that is not a non-empty string", async () => {
+    const cases = [
+      { metadata: { userId: 42 }, expected: { userId: "test-user" } },
+      { metadata: { userId: "" }, expected: { userId: "test-user" } },
+      {
+        metadata: { userId: { id: "user_01ABC" } },
+        expected: { userId: "test-user" },
+      },
+      {
+        metadata: { userId: "user_01ABC", other: null },
+        expected: { userId: "user_01ABC" },
+      },
+    ];
+
+    for (const [index, { metadata, expected }] of cases.entries()) {
+      const sessionID = `ignored-metadata-session-${index.toString()}`;
+
+      await emitSessionEvent({ type: "session.created", sessionID, metadata });
+      await runSessionTurn(sessionID);
+
+      expectSessionSpans(
+        (await flushSession(sessionID)).spans,
+        sessionID,
+        expected,
+      );
+    }
+  });
+
+  test("keeps the session user across turns until the session is deleted", async () => {
+    const sessionID = "session-user-lifecycle-session";
+
+    await emitSessionEvent({
+      type: "session.created",
+      sessionID,
+      metadata: { userId: "user_01ABC" },
+    });
+    await runSessionTurn(sessionID, "turn-1");
+    expectSessionSpans((await flushSession(sessionID)).spans, sessionID, {
+      userId: "user_01ABC",
+    });
+
+    // session.idle ended the first turn, not the session.
+    await runSessionTurn(sessionID, "turn-2");
+    expectSessionSpans((await flushSession(sessionID)).spans, sessionID, {
+      userId: "user_01ABC",
+    });
+
+    await emitSessionEvent({
+      type: "session.updated",
+      sessionID,
+      metadata: { userId: "user_02XYZ" },
+    });
+    await runSessionTurn(sessionID, "turn-3");
+    expectSessionSpans((await flushSession(sessionID)).spans, sessionID, {
+      userId: "user_02XYZ",
+    });
+
+    await emitSessionEvent({
+      type: "session.deleted",
+      sessionID,
+      metadata: { userId: "user_02XYZ" },
+    });
+    await runSessionTurn(sessionID, "turn-4");
+    expectSessionSpans((await flushSession(sessionID)).spans, sessionID, {
+      userId: "test-user",
+    });
+  });
+
+  test("attributes child agent sessions to the parent session's user", async () => {
+    const parentSessionID = "session-user-parent-session";
+    const childSessionID = "session-user-child-session";
+
+    await emitSessionEvent({
+      type: "session.created",
+      sessionID: parentSessionID,
+      metadata: { userId: "user_01ABC" },
+    });
+    // OpenCode 1 creates child agent sessions without the parent's metadata.
+    await emitSessionEvent({
+      type: "session.created",
+      sessionID: childSessionID,
+      parentID: parentSessionID,
+    });
+    await runSessionTurn(childSessionID);
+
+    expectSessionSpans(
+      (await flushSession(childSessionID)).spans,
+      childSessionID,
+      { userId: "user_01ABC" },
+    );
+  });
+
+  test("attributes the first turn of a session it has never seen", async () => {
+    // A session created before this plugin instance started, for example
+    // before OpenCode was restarted: no session event announced its metadata.
+    const sessionID = "unseen-session";
+
+    storeSession({
+      sessionID,
+      metadata: { userId: "user_01ABC" },
+    });
+    await runSessionTurn(sessionID);
+
+    expectSessionSpans((await flushSession(sessionID)).spans, sessionID, {
+      userId: "user_01ABC",
+    });
+  });
+
+  test("attributes a child agent session when it has seen neither it nor its parent", async () => {
+    const parentSessionID = "unseen-parent-session";
+    const childSessionID = "unseen-child-session";
+
+    storeSession({
+      sessionID: parentSessionID,
+      metadata: { userId: "user_01ABC" },
+    });
+    storeSession({ sessionID: childSessionID, parentID: parentSessionID });
+    await runSessionTurn(childSessionID);
+
+    expectSessionSpans(
+      (await flushSession(childSessionID)).spans,
+      childSessionID,
+      { userId: "user_01ABC" },
+    );
+    expect(sessionGetCalls).toEqual([childSessionID, parentSessionID]);
+  });
+
+  test("attributes a session again after the trace state was cleared", async () => {
+    const sessionID = "cleared-state-session";
+    const callID = "cleared-state-call";
+
+    await emitSessionEvent({
+      type: "session.created",
+      sessionID,
+      metadata: { userId: "user_01ABC" },
+    });
+    await runSessionTurn(sessionID, "turn-1");
+    // Disposing any OpenCode instance clears the trace state of every session.
+    await emitEvent({
+      type: "server.instance.disposed",
+      properties: { directory: "/other-instance" },
+    });
+    expect(sessionGetCalls).toEqual([]);
+
+    // The session is still running: its next span is a tool call, not a turn.
+    await hooks["tool.execute.before"]?.(
+      { sessionID, callID, tool: "read" },
+      { args: { path: "README.md" } },
+    );
+    await hooks["tool.execute.after"]?.(
+      { sessionID, callID, tool: "read", args: { path: "README.md" } },
+      { title: "README.md", output: "# Project", metadata: {} },
+    );
+    const tool = getSessionSpan(
+      (await flushSession(sessionID)).spans,
+      "read",
+      sessionID,
+    );
+    expect(getAttributes(tool)["langfuse.user.id"]).toBe("user_01ABC");
+
+    await runSessionTurn(sessionID, "turn-2");
+    expectSessionSpans((await flushSession(sessionID)).spans, sessionID, {
+      userId: "user_01ABC",
+    });
+    expect(sessionGetCalls).toEqual([sessionID]);
+  });
+
+  test("reads a session without metadata only once", async () => {
+    const sessionID = "unseen-session-without-metadata";
+
+    await runSessionTurn(sessionID, "turn-1");
+    expectSessionSpans((await flushSession(sessionID)).spans, sessionID, {
+      userId: "test-user",
+    });
+    await runSessionTurn(sessionID, "turn-2");
+    expectSessionSpans((await flushSession(sessionID)).spans, sessionID, {
+      userId: "test-user",
+    });
+
+    expect(sessionGetCalls).toEqual([sessionID]);
+  });
+
+  test("reads a session once when several of its spans start together", async () => {
+    const sessionID = "unseen-concurrent-session";
+
+    const startTool = hooks["tool.execute.before"];
+    if (!startTool) {
+      throw new Error("Expected a tool.execute.before hook");
+    }
+
+    storeSession({ sessionID, metadata: { userId: "user_01ABC" } });
+    await Promise.all(
+      ["call-1", "call-2"].map((callID) =>
+        startTool(
+          { sessionID, callID: `${sessionID}-${callID}`, tool: "read" },
+          { args: { path: "README.md" } },
+        ),
+      ),
+    );
+
+    const { spans } = await flushSession(sessionID);
+    expect(
+      spans.map((span) => ({
+        span: span.name,
+        userId: getAttributes(span)["langfuse.user.id"],
+      })),
+    ).toEqual([
+      { span: "read", userId: "user_01ABC" },
+      { span: "read", userId: "user_01ABC" },
+    ]);
+    expect(sessionGetCalls).toEqual([sessionID]);
+  });
+
+  test("traces with the process-wide user while a session cannot be read", async () => {
+    const failures: (typeof sessionGetFailure)[] = ["rejected", "not-found"];
+
+    for (const failure of failures) {
+      const sessionID = `unreadable-session-${String(failure)}`;
+      const sessionReads = () =>
+        sessionGetCalls.filter((id) => id === sessionID);
+
+      storeSession({ sessionID, metadata: { userId: "user_01ABC" } });
+      sessionGetFailure = failure;
+      await runSessionTurn(sessionID, "turn-1");
+
+      expectSessionSpans((await flushSession(sessionID)).spans, sessionID, {
+        userId: "test-user",
+      });
+      // One attempt for the turn, not one for each of its spans.
+      expect(sessionReads()).toHaveLength(1);
+      expect(
+        logs.filter(
+          ({ level, message }) =>
+            level === "warn" &&
+            message.includes(`Reading session ${sessionID} failed`),
+        ),
+      ).toHaveLength(1);
+
+      // The next turn tries again.
+      sessionGetFailure = undefined;
+      await runSessionTurn(sessionID, "turn-2");
+
+      expectSessionSpans((await flushSession(sessionID)).spans, sessionID, {
+        userId: "user_01ABC",
+      });
+      expect(sessionReads()).toHaveLength(2);
+    }
+  });
+
+  test("attributes sessions without a process-wide user", async () => {
+    const sessionID = "session-user-only-session";
+    const anonymousSessionID = "no-user-session";
+
+    await disposeHooks();
+    delete process.env.LANGFUSE_USER_ID;
+    hooksDisposed = false;
+
+    try {
+      hooks = await createHooks(collectorBaseUrl);
+
+      await emitSessionEvent({
+        type: "session.created",
+        sessionID,
+        metadata: { userId: "user_01ABC" },
+      });
+      await runSessionTurn(sessionID);
+      expectSessionSpans((await flushSession(sessionID)).spans, sessionID, {
+        userId: "user_01ABC",
+      });
+
+      await runSessionTurn(anonymousSessionID);
+      expectSessionSpans(
+        (await flushSession(anonymousSessionID)).spans,
+        anonymousSessionID,
+        {},
+      );
+    } finally {
+      process.env.LANGFUSE_USER_ID = "test-user";
+    }
   });
 
   test("parents each tool to the generation that requested it when lifecycle events arrive out of order", async () => {

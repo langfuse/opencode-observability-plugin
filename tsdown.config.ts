@@ -18,6 +18,8 @@ export default defineConfig({
   clean: true,
   fixedExtension: false,
   deps: {
+    // OpenCode V2 replaces external Effect imports with its Effect 4 runtime.
+    alwaysBundle: ["effect"],
     neverBundle: ["@opentelemetry/api"],
     onlyBundle: false,
   },

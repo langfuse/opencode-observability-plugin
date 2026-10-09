@@ -18,6 +18,10 @@ export class LangfuseClient {
   readonly baseUrl: string;
   readonly forceFlush: Effect.Effect<void, unknown>;
   private readonly traceState: LangfuseTraceState;
+  private readonly assistantParents = new Map<
+    string,
+    { sessionID: string; parentID: string }
+  >();
 
   constructor(input: {
     baseUrl: string;
@@ -30,6 +34,7 @@ export class LangfuseClient {
   }
 
   clearTraceState() {
+    this.assistantParents.clear();
     this.traceState.assistantParts.clear();
     this.traceState.abortedSessions.clear();
     this.traceState.tracedEventIds.clear();
@@ -40,7 +45,6 @@ export class LangfuseClient {
     this.traceState.generationParentSpans.clear();
     this.traceState.generationInputsBySession.clear();
     this.traceState.generationInputSnapshotsBySession.clear();
-    this.traceState.toolResultSourceMessageIdsBySession.clear();
     this.traceState.turnObservationsByMessageId.clear();
     this.traceState.latestTurnObservationsBySession.clear();
     this.traceState.finalizedToolCallIds.clear();
@@ -50,6 +54,11 @@ export class LangfuseClient {
   }
 
   clearSessionTraceState(sessionID: string) {
+    for (const [messageID, parent] of this.assistantParents) {
+      if (parent.sessionID === sessionID) {
+        this.assistantParents.delete(messageID);
+      }
+    }
     const sessionMessageIds = new Set<string>();
 
     for (const [messageID, parts] of this.traceState.assistantParts) {
@@ -100,7 +109,6 @@ export class LangfuseClient {
     this.traceState.generationParentSpans.delete(sessionID);
     this.traceState.generationInputsBySession.delete(sessionID);
     this.traceState.generationInputSnapshotsBySession.delete(sessionID);
-    this.traceState.toolResultSourceMessageIdsBySession.delete(sessionID);
     this.traceState.latestTurnObservationsBySession.delete(sessionID);
     this.traceState.sessionHistories.delete(sessionID);
     this.traceState.pendingUserMessageIdsBySession.delete(sessionID);
@@ -707,6 +715,10 @@ export class LangfuseClient {
     }
 
     this.traceState.tracedGenerationIds.add(input.messageID);
+    this.assistantParents.set(input.messageID, {
+      sessionID: input.sessionID,
+      parentID: input.parentID,
+    });
 
     const output = input.output ?? this.getAssistantMessage(input.messageID);
     const turn = this.getTurnObservation(input.sessionID, input.parentID);
@@ -1041,7 +1053,12 @@ export class LangfuseClient {
 
     span.setAttribute(
       "langfuse.observation.output",
-      JSON.stringify({ title: input.title, output: input.output }),
+      JSON.stringify({
+        role: "tool",
+        name: input.tool,
+        tool_call_id: input.callID,
+        content: input.output,
+      } satisfies ChatMlMessage),
     );
     span.setAttribute(
       "langfuse.observation.metadata",
@@ -1063,7 +1080,6 @@ export class LangfuseClient {
     });
     this.traceState.activeToolObservations.delete(input.callID);
     this.traceState.finalizedToolCallIds.add(input.callID);
-    this.traceState.toolMessageIdsByCallId.delete(input.callID);
   }
 
   traceToolError(input: {
@@ -1106,7 +1122,12 @@ export class LangfuseClient {
 
     span.setAttribute(
       "langfuse.observation.output",
-      JSON.stringify({ error: input.error }),
+      JSON.stringify({
+        role: "tool",
+        name: input.tool ?? observation.tool,
+        tool_call_id: input.callID,
+        content: input.error,
+      } satisfies ChatMlMessage),
     );
     span.setStatus({
       code: SpanStatusCode.ERROR,
@@ -1123,7 +1144,6 @@ export class LangfuseClient {
     });
     this.traceState.activeToolObservations.delete(input.callID);
     this.traceState.finalizedToolCallIds.add(input.callID);
-    this.traceState.toolMessageIdsByCallId.delete(input.callID);
   }
 
   private ensureGenerationParent(sessionID: string) {
@@ -1238,7 +1258,7 @@ export class LangfuseClient {
     }
 
     const startIndex =
-      history.startIndexByAssistantMessageId.get(assistantMessageID);
+      history.assistantMessages.get(assistantMessageID)?.startIndex;
 
     return startIndex == null
       ? history.messages
@@ -1266,31 +1286,181 @@ export class LangfuseClient {
     const snapshot =
       this.traceState.generationInputSnapshotsBySession.get(sessionID);
     this.traceState.generationInputSnapshotsBySession.delete(sessionID);
+    const pending = this.traceState.generationInputsBySession.get(sessionID);
+    this.traceState.generationInputsBySession.delete(sessionID);
+    const sourceMessageIds = new Set<string>();
+    for (const message of pending ?? []) {
+      if (message.role !== "tool") {
+        continue;
+      }
+      const messageID = this.traceState.toolMessageIdsByCallId.get(
+        message.tool_call_id,
+      );
+      if (messageID != null) {
+        sourceMessageIds.add(messageID);
+      }
+      this.traceState.toolMessageIdsByCallId.delete(message.tool_call_id);
+    }
     if (snapshot !== undefined) {
-      this.traceState.generationInputsBySession.delete(sessionID);
-      this.traceState.toolResultSourceMessageIdsBySession.delete(sessionID);
       return snapshot;
     }
 
-    const pending = this.traceState.generationInputsBySession.get(sessionID);
-    const sourceMessageID =
-      this.traceState.toolResultSourceMessageIdsBySession.get(sessionID);
     const pendingUserMessageID =
       this.traceState.pendingUserMessageIdsBySession.get(sessionID);
-    this.traceState.generationInputsBySession.delete(sessionID);
-    this.traceState.toolResultSourceMessageIdsBySession.delete(sessionID);
 
-    const assistantOfToolResults =
-      sourceMessageID == null
-        ? []
-        : (this.getAssistantMessage(sourceMessageID) ?? []);
-    const prefix = this.getHistoryPrefix(sessionID, assistantMessageID);
+    const unplacedToolCallIds = new Set<string>();
+    const prefix = (() => {
+      const storedPrefix = this.getHistoryPrefix(sessionID, assistantMessageID);
+      if (sourceMessageIds.size === 0) {
+        return storedPrefix;
+      }
 
-    if (prefix.length === 0) {
-      // No snapshot from OpenCode yet, so the live delta is all there is.
-      return sourceMessageID == null
-        ? pending
-        : [...assistantOfToolResults, ...(pending ?? [])];
+      const history = this.traceState.sessionHistories.get(sessionID);
+      const rebuiltMessages = new Map<string, ChatMlMessage[]>();
+      // Live message order is independent of the order tools finish in.
+      const orderedSourceMessageIds = new Set([
+        ...Array.from(this.traceState.assistantParts.keys()).filter(
+          (messageID) => sourceMessageIds.has(messageID),
+        ),
+        ...sourceMessageIds,
+      ]);
+      for (const sourceMessageID of orderedSourceMessageIds) {
+        const source = history?.assistantMessages.get(sourceMessageID);
+        const liveParts = Array.from(
+          this.traceState.assistantParts.get(sourceMessageID)?.values() ?? [],
+        );
+        const parts = [...(source?.parts ?? [])];
+        let previousIndex: number | undefined;
+
+        // Tool hooks and message events use different part IDs for the same call.
+        // Step markers anchor live deltas without collapsing sequential calls
+        // into one assistant message or losing snapshot-only parts after a restart.
+        const partKey = (part: MessagePart) =>
+          part.type === "tool" ? `tool:${part.callID}` : part.id;
+        for (const [liveIndex, part] of liveParts.entries()) {
+          const storedIndex = parts.findIndex(
+            (stored) => partKey(stored) === partKey(part),
+          );
+          if (storedIndex >= 0) {
+            const stored = parts[storedIndex];
+            previousIndex = storedIndex;
+            if (
+              stored.type === "tool" &&
+              part.type === "tool" &&
+              (stored.state.status === "completed" ||
+                stored.state.status === "error") &&
+              (part.state.status === "pending" ||
+                part.state.status === "running")
+            ) {
+              continue;
+            }
+            if (
+              (stored.type === "text" || stored.type === "reasoning") &&
+              (part.type === "text" || part.type === "reasoning") &&
+              stored.text.startsWith(part.text)
+            ) {
+              continue;
+            }
+            parts[storedIndex] = part;
+            continue;
+          }
+
+          const insertionIndex = (() => {
+            if (previousIndex !== undefined) {
+              if (part.type === "step-start") {
+                // Snapshot-only parts still belong to the preceding step.
+                const searchStartIndex = previousIndex + 1;
+                const nextStepIndex = parts.findIndex(
+                  (stored, index) =>
+                    index >= searchStartIndex && stored.type === "step-start",
+                );
+                return nextStepIndex < 0 ? parts.length : nextStepIndex;
+              }
+              return previousIndex + 1;
+            }
+            const nextKeys = new Set(
+              liveParts.slice(liveIndex + 1).map(partKey),
+            );
+            const nextStoredIndex = parts.findIndex((stored) =>
+              nextKeys.has(partKey(stored)),
+            );
+            if (nextStoredIndex >= 0) {
+              return nextStoredIndex;
+            }
+            return parts.length;
+          })();
+          parts.splice(insertionIndex, 0, part);
+          previousIndex = insertionIndex;
+        }
+
+        const rebuilt = buildSessionHistory([
+          { info: { id: sourceMessageID, role: "assistant" }, parts },
+        ]).messages;
+        rebuiltMessages.set(sourceMessageID, rebuilt);
+      }
+
+      const replacements: (Pick<
+        NonNullable<ReturnType<SessionHistory["assistantMessages"]["get"]>>,
+        "startIndex" | "endIndex"
+      > & { messages: ChatMlMessage[] })[] = [];
+      for (const [messageID, source] of history?.assistantMessages ?? []) {
+        const rebuilt = rebuiltMessages.get(messageID);
+        if (!rebuilt || source.endIndex > storedPrefix.length) {
+          continue;
+        }
+        replacements.push({ ...source, messages: rebuilt });
+        rebuiltMessages.delete(messageID);
+      }
+      for (const [messageID, rebuilt] of rebuiltMessages) {
+        const parentID = this.assistantParents.get(messageID)?.parentID;
+        const parentIndex =
+          parentID == null ? undefined : history?.userMessages.get(parentID);
+        const userCount = storedPrefix.filter(
+          (message) => message.role === "user",
+        ).length;
+        if (parentIndex === undefined && userCount > 1) {
+          // Without a parent anchor, assigning this group to a turn would be a guess.
+          for (const message of rebuilt) {
+            if (message.role === "assistant") {
+              for (const call of message.tool_calls ?? []) {
+                unplacedToolCallIds.add(call.id);
+              }
+            }
+          }
+          continue;
+        }
+        const nextUserIndex =
+          parentIndex === undefined
+            ? -1
+            : storedPrefix.findIndex(
+                (message, index) =>
+                  index > parentIndex && message.role === "user",
+              );
+        const insertionIndex =
+          nextUserIndex < 0 ? storedPrefix.length : nextUserIndex;
+        replacements.push({
+          startIndex: insertionIndex,
+          endIndex: insertionIndex,
+          messages: rebuilt,
+        });
+      }
+      const merged: ChatMlMessage[] = [];
+      let cursor = 0;
+      for (const replacement of replacements.sort(
+        (a, b) => a.startIndex - b.startIndex || a.endIndex - b.endIndex,
+      )) {
+        merged.push(
+          ...storedPrefix.slice(cursor, replacement.startIndex),
+          ...replacement.messages,
+        );
+        cursor = replacement.endIndex;
+      }
+      merged.push(...storedPrefix.slice(cursor));
+      return merged;
+    })();
+
+    if (prefix.length === 0 && pending === undefined) {
+      return undefined;
     }
 
     // Taking the user message from both sources would list it twice, so it
@@ -1303,15 +1473,39 @@ export class LangfuseClient {
     )
       ? []
       : (pending ?? []).filter((message) => message.role === "user");
-    const toolResults = (pending ?? []).filter(
-      (message) => message.role === "tool",
+    const existingToolResultIds = new Set(
+      prefix
+        .filter((message) => message.role === "tool")
+        .map((message) => message.tool_call_id),
     );
-    const combined = [
-      ...prefix,
-      ...assistantOfToolResults,
-      ...toolResults,
-      ...pendingUserMessages,
-    ];
+    const combined = [...prefix];
+    for (const message of pending ?? []) {
+      if (
+        message.role !== "tool" ||
+        unplacedToolCallIds.has(message.tool_call_id) ||
+        existingToolResultIds.has(message.tool_call_id)
+      ) {
+        continue;
+      }
+      existingToolResultIds.add(message.tool_call_id);
+      const assistantIndex = combined.findIndex(
+        (assistant) =>
+          assistant.role === "assistant" &&
+          assistant.tool_calls?.some(
+            (call) => call.id === message.tool_call_id,
+          ) === true,
+      );
+      if (assistantIndex < 0) {
+        combined.push(message);
+        continue;
+      }
+      let resultIndex = assistantIndex + 1;
+      while (combined[resultIndex]?.role === "tool") {
+        resultIndex++;
+      }
+      combined.splice(resultIndex, 0, message);
+    }
+    combined.push(...pendingUserMessages);
 
     if (pendingUserMessages.length > 0) {
       return combined;
@@ -1350,10 +1544,7 @@ export class LangfuseClient {
     this.traceState.generationInputsBySession.set(input.sessionID, toolResults);
 
     if (messageID != null) {
-      this.traceState.toolResultSourceMessageIdsBySession.set(
-        input.sessionID,
-        messageID,
-      );
+      this.traceState.toolMessageIdsByCallId.set(input.callID, messageID);
     }
   }
 
@@ -1395,7 +1586,6 @@ export type LangfuseTraceState = {
   generationParentSpans: Map<string, ApiSpan>;
   generationInputsBySession: Map<string, ChatMlMessage[]>;
   generationInputSnapshotsBySession: Map<string, unknown>;
-  toolResultSourceMessageIdsBySession: Map<string, string>;
   sessionParentIds: Map<string, string>;
   sessionHistories: Map<string, SessionHistory>;
   pendingUserMessageIdsBySession: Map<string, string>;
@@ -1408,7 +1598,11 @@ export type MessagePart = Extract<
 
 export type SessionHistory = {
   messages: ChatMlMessage[];
-  startIndexByAssistantMessageId: Map<string, number>;
+  userMessages: Map<string, number>;
+  assistantMessages: Map<
+    string,
+    { startIndex: number; endIndex: number; parts: MessagePart[] }
+  >;
   // Which messages the snapshot actually holds. A stale snapshot - the last
   // refresh failed, or it ran before the message existed - does not contain
   // the request that triggered the generation, and the live buffer has to
@@ -1471,18 +1665,20 @@ export function buildSessionHistory(
   }[],
 ): SessionHistory {
   const history: ChatMlMessage[] = [];
-  const startIndexByAssistantMessageId = new Map<string, number>();
+  const assistantMessages: SessionHistory["assistantMessages"] = new Map();
+  const userMessages: SessionHistory["userMessages"] = new Map();
   const messageIds = new Set<string>();
 
   for (const message of messages) {
     messageIds.add(message.info.id);
 
     if (message.info.role === "user") {
+      userMessages.set(message.info.id, history.length);
       history.push(formatUserMessage(message.parts));
       continue;
     }
 
-    startIndexByAssistantMessageId.set(message.info.id, history.length);
+    const startIndex = history.length;
 
     for (const step of splitAssistantSteps(message.parts)) {
       const assistant = buildAssistantMessage(step);
@@ -1493,9 +1689,14 @@ export function buildSessionHistory(
 
       history.push(...toolResultsOfStep(step));
     }
+    assistantMessages.set(message.info.id, {
+      startIndex,
+      endIndex: history.length,
+      parts: message.parts,
+    });
   }
 
-  return { messages: history, startIndexByAssistantMessageId, messageIds };
+  return { messages: history, assistantMessages, userMessages, messageIds };
 }
 
 function withToolDefinitions(
@@ -1756,7 +1957,6 @@ export const createLangfuseClient = (input: {
       generationParentSpans: new Map<string, ApiSpan>(),
       generationInputsBySession: new Map<string, ChatMlMessage[]>(),
       generationInputSnapshotsBySession: new Map<string, unknown>(),
-      toolResultSourceMessageIdsBySession: new Map<string, string>(),
       sessionParentIds: new Map<string, string>(),
       sessionHistories: new Map<string, SessionHistory>(),
       pendingUserMessageIdsBySession: new Map<string, string>(),

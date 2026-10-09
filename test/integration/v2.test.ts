@@ -323,6 +323,94 @@ describe("OpenCode 2 package entrypoint", () => {
     await cleanup?.();
   });
 
+  test.each([
+    {
+      tool: "skill",
+      input: { id: "build-project" },
+    },
+    {
+      tool: "task",
+      input: { subagent_type: "developer", prompt: "Fix the build" },
+    },
+    {
+      tool: "subagent",
+      input: { agent: "ts-reviewer", prompt: "Review the build" },
+    },
+  ])(
+    "forwards semantic $tool input for observation naming",
+    async (toolCall) => {
+      let executeBefore: ((input: unknown) => void) | undefined;
+      let executeAfter: ((input: unknown) => void) | undefined;
+      const registration = { dispose: vi.fn(() => Promise.resolve()) };
+      const contextInput: unknown = {
+        app: { version: "2.0.4" },
+        session: { hook: vi.fn(() => Promise.resolve(registration)) },
+        tool: {
+          hook: vi.fn((name: string, handler: (input: unknown) => void) => {
+            if (name === "execute.before") {
+              executeBefore = handler;
+            }
+            if (name === "execute.after") {
+              executeAfter = handler;
+            }
+            return Promise.resolve(registration);
+          }),
+        },
+        event: {
+          subscribe: () => ({
+            async *[Symbol.asyncIterator]() {
+              await Promise.resolve();
+              yield* [];
+            },
+          }),
+        },
+      };
+      const context = Schema.decodeUnknownSync(
+        Schema.declare(
+          (input): input is Parameters<typeof SourcePlugin.setup>[0] =>
+            typeof input === "object" && input !== null,
+        ),
+      )(contextInput);
+
+      const cleanup = await SourcePlugin.setup(context);
+      expect(executeBefore).toBeTypeOf("function");
+      expect(executeAfter).toBeTypeOf("function");
+
+      const input = {
+        id: `${toolCall.tool}-call`,
+        messageID: "assistant-1",
+        sessionID: "session-1",
+        tool: toolCall.tool,
+        input: toolCall.input,
+      };
+      executeBefore?.(input);
+      executeAfter?.({
+        ...input,
+        status: "success",
+        result: { content: "ok" },
+      });
+
+      expect(runtime.traceToolStart).toHaveBeenCalledWith({
+        sessionID: "session-1",
+        messageID: "assistant-1",
+        callID: `${toolCall.tool}-call`,
+        tool: toolCall.tool,
+        args: toolCall.input,
+      });
+      expect(runtime.traceToolEnd).toHaveBeenCalledWith({
+        sessionID: "session-1",
+        messageID: "assistant-1",
+        callID: `${toolCall.tool}-call`,
+        tool: toolCall.tool,
+        args: toolCall.input,
+        title: toolCall.tool,
+        output: "ok",
+      });
+
+      await cleanup?.();
+    },
+  );
+
   test("captures the complete model input from each context hook", async () => {
     let context:
       | ((input: {

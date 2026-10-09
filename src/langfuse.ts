@@ -978,10 +978,12 @@ export class LangfuseClient {
 
     this.ensureGenerationParent(input.sessionID);
 
+    const observationName = this.getToolObservationName(input.tool, input.args);
+
     this.withObservationParent(
       input.sessionID,
       () => {
-        const span = this.traceState.tracer.startSpan(input.tool, {
+        const span = this.traceState.tracer.startSpan(observationName, {
           attributes: {
             "langfuse.observation.type": "tool",
             "session.id": input.sessionID,
@@ -1124,6 +1126,40 @@ export class LangfuseClient {
     this.traceState.activeToolObservations.delete(input.callID);
     this.traceState.finalizedToolCallIds.add(input.callID);
     this.traceState.toolMessageIdsByCallId.delete(input.callID);
+  }
+
+  // Use skill or subagent names when available; otherwise fall back to the tool name.
+  private getToolObservationName(tool: string, args: unknown) {
+    if (typeof args !== "object" || args === null || Array.isArray(args)) {
+      return tool;
+    }
+
+    let semanticName: unknown;
+    if (tool === "skill") {
+      // OpenCode v1 sends the skill name; OpenCode v2 sends the skill id.
+      if ("name" in args && typeof args.name === "string") {
+        semanticName = args.name;
+      } else if ("id" in args) {
+        semanticName = args.id;
+      } else {
+        return tool;
+      }
+      // OpenCode v1 represents subagent calls as task tools.
+    } else if (tool === "task" && "subagent_type" in args) {
+      semanticName = args.subagent_type;
+      // OpenCode v2 represents subagent calls as dedicated subagent tools.
+    } else if (tool === "subagent" && "agent" in args) {
+      semanticName = args.agent;
+    } else {
+      return tool;
+    }
+
+    if (typeof semanticName !== "string") {
+      return tool;
+    }
+
+    const name = semanticName.trim();
+    return name === "" ? tool : `${tool}:${name}`;
   }
 
   private ensureGenerationParent(sessionID: string) {

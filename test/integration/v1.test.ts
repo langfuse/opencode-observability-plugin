@@ -8,7 +8,6 @@ import { Schema } from "effect";
 import {
   afterAll,
   afterEach,
-  beforeAll,
   beforeEach,
   describe,
   expect,
@@ -147,6 +146,7 @@ let plugin: Plugin;
 let collectorStatus = 200;
 let hooksDisposed = false;
 let collectorBaseUrl: string;
+let collectorPort: number | undefined;
 let toolListCalls = 0;
 let toolListShouldFail = false;
 
@@ -519,7 +519,15 @@ const disposeHooks = async () => {
   }
 };
 
-beforeAll(async () => {
+beforeEach(async () => {
+  requests.length = 0;
+  sessionStore.clear();
+  collectorErrors.length = 0;
+  collectorStatus = 200;
+  hooksDisposed = false;
+  toolListCalls = 0;
+  toolListShouldFail = false;
+  sessionMessagesShouldFail = false;
   server = createServer((request, response) => {
     const chunks: Buffer[] = [];
 
@@ -553,7 +561,9 @@ beforeAll(async () => {
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
+    // The process-wide tracer retains its endpoint across plugin instances.
+    // Rebind the same port, but give each test a new collector and connections.
+    server.listen(collectorPort ?? 0, "127.0.0.1", () => {
       resolve();
     });
   });
@@ -562,6 +572,7 @@ beforeAll(async () => {
   if (address === null || typeof address === "string") {
     throw new Error("Expected the test collector to listen on a TCP port");
   }
+  collectorPort = address.port;
 
   process.env.LANGFUSE_PUBLIC_KEY = "pk-test";
   process.env.LANGFUSE_SECRET_KEY = "sk-test";
@@ -574,26 +585,13 @@ beforeAll(async () => {
   const builtPluginUrl = new URL("../../dist/v1/index.js", import.meta.url);
   const builtPlugin: unknown = await import(builtPluginUrl.href);
   plugin = Schema.decodeUnknownSync(PluginModuleSchema)(builtPlugin).default;
-});
-
-beforeEach(async () => {
-  requests.length = 0;
-  sessionStore.clear();
-  collectorErrors.length = 0;
-  collectorStatus = 200;
-  hooksDisposed = false;
-  toolListCalls = 0;
-  toolListShouldFail = false;
-  sessionMessagesShouldFail = false;
   hooks = await createHooks(collectorBaseUrl);
 });
 
 afterEach(async () => {
-  await disposeHooks();
-});
-
-afterAll(async () => {
   try {
+    await disposeHooks();
+  } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => {
         if (error) {
@@ -603,20 +601,22 @@ afterAll(async () => {
         }
       });
     });
-  } finally {
-    for (const [name, value] of Object.entries({
-      LANGFUSE_PUBLIC_KEY: originalEnvironment.publicKey,
-      LANGFUSE_SECRET_KEY: originalEnvironment.secretKey,
-      LANGFUSE_BASE_URL: originalEnvironment.baseUrl,
-      LANGFUSE_BASEURL: originalEnvironment.legacyBaseUrl,
-      LANGFUSE_ENVIRONMENT: originalEnvironment.environment,
-      LANGFUSE_USER_ID: originalEnvironment.userId,
-    })) {
-      if (value === undefined) {
-        Reflect.deleteProperty(process.env, name);
-      } else {
-        process.env[name] = value;
-      }
+  }
+});
+
+afterAll(() => {
+  for (const [name, value] of Object.entries({
+    LANGFUSE_PUBLIC_KEY: originalEnvironment.publicKey,
+    LANGFUSE_SECRET_KEY: originalEnvironment.secretKey,
+    LANGFUSE_BASE_URL: originalEnvironment.baseUrl,
+    LANGFUSE_BASEURL: originalEnvironment.legacyBaseUrl,
+    LANGFUSE_ENVIRONMENT: originalEnvironment.environment,
+    LANGFUSE_USER_ID: originalEnvironment.userId,
+  })) {
+    if (value === undefined) {
+      Reflect.deleteProperty(process.env, name);
+    } else {
+      process.env[name] = value;
     }
   }
 });
@@ -1052,13 +1052,17 @@ describe("built plugin", { concurrent: false }, () => {
       path: "README.md",
     });
     expect(getJsonAttribute(tool, "langfuse.observation.output")).toEqual({
-      title: "README.md",
-      output: "# Project",
+      role: "tool",
+      name: "read",
+      tool_call_id: "nested-observations-call",
+      content: "# Project",
     });
     const mcpTool = getSpan(spans, "mcp_test_tool");
     expect(getJsonAttribute(mcpTool, "langfuse.observation.output")).toEqual({
-      title: "mcp_test_tool",
-      output: "MCP tool result\n\nMCP resource contents",
+      role: "tool",
+      name: "mcp_test_tool",
+      tool_call_id: mcpCallID,
+      content: "MCP tool result\n\nMCP resource contents",
     });
     const failedMcpTool = getSpan(spans, "mcp_failing_tool");
     expect(failedMcpTool.status).toEqual({
@@ -1067,7 +1071,12 @@ describe("built plugin", { concurrent: false }, () => {
     });
     expect(
       getJsonAttribute(failedMcpTool, "langfuse.observation.output"),
-    ).toEqual({ error: "MCP tool failed" });
+    ).toEqual({
+      role: "tool",
+      name: "mcp_failing_tool",
+      tool_call_id: failedMcpCallID,
+      content: "MCP tool failed",
+    });
     expect(tool.traceId).toBe(generation.traceId);
     expect(tool.parentSpanId).toBe(generation.spanId);
 
@@ -1080,7 +1089,12 @@ describe("built plugin", { concurrent: false }, () => {
       message: "Tool execution timed out after 5 seconds",
     });
     expect(getJsonAttribute(failedTool, "langfuse.observation.output")).toEqual(
-      { error: "Tool execution timed out after 5 seconds" },
+      {
+        role: "tool",
+        name: "webfetch",
+        tool_call_id: "timed-out-webfetch",
+        content: "Tool execution timed out after 5 seconds",
+      },
     );
 
     const retry = getSpan(spans, "opencode.generation.retry");
@@ -1511,6 +1525,671 @@ describe("built plugin", { concurrent: false }, () => {
     ]);
   });
 
+  test.each([
+    { snapshot: "complete", storedCallCount: 3 },
+    { snapshot: "partial", storedCallCount: 1 },
+    { snapshot: "text-only", storedCallCount: 0 },
+  ])(
+    "matches parallel same-name tool responses without duplicating $snapshot history",
+    async ({ storedCallCount }) => {
+      const sessionID = "parallel-tool-session";
+      const userMessageID = "parallel-tool-user";
+      const assistantMessageID = "parallel-tool-assistant";
+      const calls = [
+        {
+          callID: "call-first",
+          path: "first.txt",
+          content: "First\nresponse",
+          failed: false,
+        },
+        {
+          callID: "call-second",
+          path: "second.txt",
+          content: "Second response",
+          failed: false,
+        },
+        {
+          callID: "call-missing",
+          path: "missing.txt",
+          content: "ENOENT: missing.txt",
+          failed: true,
+        },
+      ];
+
+      await sendUserMessage({
+        sessionID,
+        messageID: userMessageID,
+        text: "Read three files",
+        started: startedAt,
+      });
+      await startAssistantMessage({
+        sessionID,
+        userMessageID,
+        assistantMessageID,
+        started: startedAt + 100,
+      });
+      await startGeneration({
+        id: "parallel-tool-step",
+        sessionID,
+        assistantMessageID,
+        started: startedAt + 100,
+      });
+
+      const textPart = {
+        id: "parallel-tool-text",
+        sessionID,
+        messageID: assistantMessageID,
+        type: "text" as const,
+        text: "Reading files",
+      };
+      await emitEvent({
+        type: "message.part.updated",
+        properties: { part: textPart },
+      });
+
+      const parts = calls.map((call) => ({
+        id: `${call.callID}-part`,
+        sessionID,
+        messageID: assistantMessageID,
+        type: "tool" as const,
+        callID: call.callID,
+        tool: "read",
+        state: call.failed
+          ? {
+              status: "error" as const,
+              input: { path: call.path },
+              error: call.content,
+              time: { start: startedAt + 200, end: startedAt + 300 },
+            }
+          : {
+              status: "completed" as const,
+              input: { path: call.path },
+              title: call.path,
+              output: call.content,
+              metadata: {},
+              time: { start: startedAt + 200, end: startedAt + 300 },
+            },
+      }));
+      for (const part of parts) {
+        await emitEvent({
+          type: "message.part.updated",
+          properties: {
+            part: {
+              ...part,
+              state: {
+                status: "running",
+                input: part.state.input,
+                time: { start: startedAt + 200 },
+              },
+            },
+          },
+        });
+      }
+      // Complete in reverse order so names and arrival order cannot match results.
+      for (const part of [...parts].reverse()) {
+        await emitEvent({ type: "message.part.updated", properties: { part } });
+        await emitEvent({ type: "message.part.updated", properties: { part } });
+      }
+      await completeGeneration({
+        sessionID,
+        userMessageID,
+        assistantMessageID,
+        started: startedAt + 100,
+        completed: startedAt + 400,
+      });
+      storeMessage(sessionID, {
+        info: { id: assistantMessageID, role: "assistant", sessionID },
+        parts: [textPart, ...parts.slice(0, storedCallCount)],
+      });
+
+      await startGeneration({
+        id: "parallel-tool-followup-step",
+        sessionID,
+        assistantMessageID: "parallel-tool-followup",
+        started: startedAt + 500,
+      });
+      await completeGeneration({
+        sessionID,
+        userMessageID,
+        assistantMessageID: "parallel-tool-followup",
+        started: startedAt + 500,
+        completed: startedAt + 700,
+        text: "Done",
+      });
+
+      const { spans } = await flushSession(sessionID);
+      const toolSpans = spans.filter((span) => span.name === "read");
+      expect(toolSpans).toHaveLength(calls.length);
+      const generations = spans.filter(
+        (span) => span.name === "opencode.generation",
+      );
+      const generation = generations.find(
+        (span) => span.spanId === toolSpans[0].parentSpanId,
+      );
+      const followup = generations.find((span) => span !== generation);
+      if (!generation || !followup) {
+        throw new Error("Expected both generations");
+      }
+      const toolCalls = calls.map((call) => ({
+        id: call.callID,
+        name: "read",
+        arguments: JSON.stringify({ path: call.path }),
+      }));
+      expect(
+        getJsonAttribute(generation, "langfuse.observation.output"),
+      ).toEqual([
+        { role: "assistant", content: "Reading files", tool_calls: toolCalls },
+      ]);
+      const results = calls.map((call) => ({
+        role: "tool",
+        name: "read",
+        tool_call_id: call.callID,
+        content: call.content,
+      }));
+      const outputs = toolSpans.map((span) =>
+        getJsonAttribute(span, "langfuse.observation.output"),
+      );
+      expect(outputs).toEqual(expect.arrayContaining(results));
+      for (const [index, call] of calls.entries()) {
+        const span = toolSpans.find((candidate) => {
+          const output = getJsonAttribute(
+            candidate,
+            "langfuse.observation.output",
+          );
+          return (
+            typeof output === "object" &&
+            output !== null &&
+            "tool_call_id" in output &&
+            output.tool_call_id === call.callID
+          );
+        });
+        if (!span) {
+          throw new Error(`Expected tool response for ${call.callID}`);
+        }
+        expect(getJsonAttribute(span, "langfuse.observation.output")).toEqual(
+          results[index],
+        );
+        expect(span.parentSpanId).toBe(generation.spanId);
+        expect(getJsonAttribute(span, "langfuse.observation.metadata")).toEqual(
+          {
+            callID: call.callID,
+            tool: "read",
+          },
+        );
+        if (call.failed) {
+          expect(span.status).toEqual({ code: 2, message: call.content });
+        }
+      }
+      expect(getJsonAttribute(followup, "langfuse.observation.input")).toEqual([
+        { role: "user", content: [{ type: "text", text: "Read three files" }] },
+        { role: "assistant", content: "Reading files", tool_calls: toolCalls },
+        ...results,
+      ]);
+    },
+  );
+
+  test.each(["known", "unknown"] as const)(
+    "places a missing tool source only with a %s parent turn",
+    async (parent) => {
+      const sessionID = "missing-source-turn-session";
+      const userMessageID = "missing-source-first-user";
+      const assistantMessageID = "missing-source-assistant";
+      const callID = "missing-source-call";
+      await sendUserMessage({
+        sessionID,
+        messageID: userMessageID,
+        text: "Read a file",
+        started: startedAt,
+      });
+      await startAssistantMessage({
+        sessionID,
+        userMessageID,
+        assistantMessageID,
+        started: startedAt + 100,
+      });
+      await startGeneration({
+        id: "missing-source-step",
+        sessionID,
+        assistantMessageID,
+        started: startedAt + 100,
+      });
+      await emitEvent({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "missing-source-tool",
+            sessionID,
+            messageID: assistantMessageID,
+            type: "tool",
+            callID,
+            tool: "read",
+            state: {
+              status: "running",
+              input: {},
+              time: { start: startedAt + 100 },
+            },
+          },
+        },
+      });
+      await completeGeneration({
+        sessionID,
+        userMessageID: parent === "known" ? userMessageID : "unknown-parent",
+        assistantMessageID,
+        started: startedAt + 100,
+        completed: startedAt + 200,
+        text: "Reading",
+      });
+      sessionStore.set(
+        sessionID,
+        (sessionStore.get(sessionID) ?? []).filter(
+          (message) => message.info.id !== assistantMessageID,
+        ),
+      );
+      const nextUserMessageID = "missing-source-next-user";
+      await sendUserMessage({
+        sessionID,
+        messageID: nextUserMessageID,
+        text: "Now summarize",
+        started: startedAt + 300,
+      });
+      // The old tool finishes after the new user message reaches the store.
+      await hooks["tool.execute.after"]?.(
+        { sessionID, callID, tool: "read", args: {} },
+        { title: "read", output: "File contents", metadata: {} },
+      );
+      await startGeneration({
+        id: "missing-source-followup-step",
+        sessionID,
+        assistantMessageID: "missing-source-followup",
+        started: startedAt + 400,
+      });
+      await completeGeneration({
+        sessionID,
+        userMessageID: nextUserMessageID,
+        assistantMessageID: "missing-source-followup",
+        started: startedAt + 400,
+        completed: startedAt + 500,
+        text: "Done",
+      });
+      const { spans } = await flushSession(sessionID);
+      const followup = spans
+        .filter((span) => span.name === "opencode.generation")
+        .sort(
+          (a, b) => Number(a.startTimeUnixNano) - Number(b.startTimeUnixNano),
+        )
+        .at(-1);
+      if (!followup) {
+        throw new Error("Expected followup generation");
+      }
+      expect(getJsonAttribute(followup, "langfuse.observation.input")).toEqual([
+        { role: "user", content: [{ type: "text", text: "Read a file" }] },
+        ...(parent === "known"
+          ? [
+              {
+                role: "assistant",
+                content: "Reading",
+                tool_calls: [{ id: callID, name: "read", arguments: "{}" }],
+              },
+              {
+                role: "tool",
+                name: "read",
+                tool_call_id: callID,
+                content: "File contents",
+              },
+            ]
+          : []),
+        {
+          role: "user",
+          content: [{ type: "text", text: "Now summarize" }],
+          tools: expectedToolDefinitions,
+        },
+      ]);
+    },
+  );
+
+  test.each(["stale", "partial"] as const)(
+    "rebuilds every tool source with reverse completions and %s history",
+    async (history) => {
+      const sessionID = "multiple-tool-sources-session";
+      const userMessageID = "multiple-tool-sources-user";
+      const calls = [1, 2].map((index) => ({
+        assistantMessageID: `multiple-tool-sources-assistant-${index.toString()}`,
+        callID: `multiple-tool-sources-call-${index.toString()}`,
+        output: `response ${index.toString()}`,
+      }));
+      await sendUserMessage({
+        sessionID,
+        messageID: userMessageID,
+        text: "Read two files",
+        started: startedAt,
+      });
+      for (const [index, call] of calls.entries()) {
+        await startAssistantMessage({
+          sessionID,
+          userMessageID,
+          assistantMessageID: call.assistantMessageID,
+          started: startedAt + index * 100,
+        });
+        await startGeneration({
+          id: `${call.callID}-step`,
+          sessionID,
+          assistantMessageID: call.assistantMessageID,
+          started: startedAt + index * 100,
+        });
+        if (history === "stale" || index === calls.length - 1) {
+          sessionMessagesShouldFail = true;
+        }
+        await emitEvent({
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: `${call.callID}-part`,
+              sessionID,
+              messageID: call.assistantMessageID,
+              type: "tool",
+              callID: call.callID,
+              tool: "read",
+              state: {
+                status: "running",
+                input: {},
+                time: { start: startedAt + index * 100 },
+              },
+            },
+          },
+        });
+        await completeGeneration({
+          sessionID,
+          userMessageID,
+          assistantMessageID: call.assistantMessageID,
+          started: startedAt + index * 100,
+          completed: startedAt + index * 100 + 50,
+          text: `Reading ${call.callID}`,
+        });
+      }
+      for (const call of calls.toReversed()) {
+        await hooks["tool.execute.after"]?.(
+          { sessionID, callID: call.callID, tool: "read", args: {} },
+          { title: "read", output: call.output, metadata: {} },
+        );
+      }
+      await startGeneration({
+        id: "multiple-tool-sources-followup-step",
+        sessionID,
+        assistantMessageID: "multiple-tool-sources-followup",
+        started: startedAt + 500,
+      });
+      await completeGeneration({
+        sessionID,
+        userMessageID,
+        assistantMessageID: "multiple-tool-sources-followup",
+        started: startedAt + 500,
+        completed: startedAt + 600,
+        text: "Done",
+      });
+      const { spans } = await flushSession(sessionID);
+      const followup = spans
+        .filter((span) => span.name === "opencode.generation")
+        .sort(
+          (a, b) => Number(a.startTimeUnixNano) - Number(b.startTimeUnixNano),
+        )
+        .at(-1);
+      if (!followup) {
+        throw new Error("Expected followup generation");
+      }
+      expect(getJsonAttribute(followup, "langfuse.observation.input")).toEqual([
+        { role: "user", content: [{ type: "text", text: "Read two files" }] },
+        ...calls.flatMap((call) => [
+          {
+            role: "assistant",
+            content: `Reading ${call.callID}`,
+            tool_calls: [{ id: call.callID, name: "read", arguments: "{}" }],
+          },
+          {
+            role: "tool",
+            name: "read",
+            tool_call_id: call.callID,
+            content: call.output,
+          },
+        ]),
+      ]);
+    },
+  );
+
+  test.each([
+    "stale-content",
+    "missing-later-call",
+    "missing-later-step",
+    "snapshot-only-first-step",
+    "live-first-marker-only",
+    "snapshot-only-content",
+    "snapshot-ahead-of-live",
+    "empty-assistant",
+    "missing-earlier-call",
+    "hook-only-results",
+  ] as const)("preserves assistant steps with %s history", async (snapshot) => {
+    const sessionID = "assistant-step-history-session";
+    const userMessageID = "assistant-step-history-user";
+    const assistantMessageID = "assistant-step-history-assistant";
+    const steps = ["first", "second"].map((name) => ({
+      name,
+      marker: {
+        id: `${name}-step`,
+        sessionID,
+        messageID: assistantMessageID,
+        type: "step-start" as const,
+      },
+      text: {
+        id: `${name}-text`,
+        sessionID,
+        messageID: assistantMessageID,
+        type: "text" as const,
+        text: `Reading ${name} file`,
+      },
+      reasoning: {
+        id: `${name}-reasoning`,
+        sessionID,
+        messageID: assistantMessageID,
+        type: "reasoning" as const,
+        text: `Need ${name} file`,
+        time: { start: startedAt + 100, end: startedAt + 200 },
+      },
+      tool: {
+        id: `${name}-tool`,
+        sessionID,
+        messageID: assistantMessageID,
+        type: "tool" as const,
+        callID: `${name}-call`,
+        tool: "read",
+        state: {
+          status: "completed" as const,
+          input: { path: `${name}.txt` },
+          title: `${name}.txt`,
+          output: `${name} response`,
+          metadata: {},
+          time: { start: startedAt + 200, end: startedAt + 300 },
+        },
+      },
+    }));
+    await sendUserMessage({
+      sessionID,
+      messageID: userMessageID,
+      text: "Read two files",
+      started: startedAt,
+    });
+    await startAssistantMessage({
+      sessionID,
+      userMessageID,
+      assistantMessageID,
+      started: startedAt + 100,
+    });
+    await startGeneration({
+      id: "assistant-step-history-generation",
+      sessionID,
+      assistantMessageID,
+      started: startedAt + 100,
+    });
+    for (const step of steps) {
+      if (snapshot === "snapshot-only-first-step" && step.name === "first") {
+        continue;
+      }
+      for (const part of [step.marker, step.text, step.reasoning, step.tool]) {
+        if (
+          snapshot === "live-first-marker-only" &&
+          step.name === "first" &&
+          part.type !== "step-start"
+        ) {
+          continue;
+        }
+        if (
+          snapshot === "snapshot-only-content" &&
+          step.name === "second" &&
+          (part.type === "text" || part.type === "reasoning")
+        ) {
+          continue;
+        }
+        const livePart = (() => {
+          if (
+            snapshot === "snapshot-ahead-of-live" &&
+            step.name === "second" &&
+            (part.type === "text" || part.type === "reasoning")
+          ) {
+            return { ...part, text: part.text.split(" ")[0] };
+          }
+          if (
+            part.type === "tool" &&
+            (snapshot === "hook-only-results" ||
+              (snapshot === "snapshot-ahead-of-live" && step.name === "second"))
+          ) {
+            return {
+              ...part,
+              state: {
+                status: "running" as const,
+                input: part.state.input,
+                time: { start: startedAt + 200 },
+              },
+            };
+          }
+          return part;
+        })();
+        await emitEvent({
+          type: "message.part.updated",
+          properties: { part: livePart },
+        });
+      }
+      if (snapshot === "hook-only-results") {
+        await hooks["tool.execute.after"]?.(
+          {
+            sessionID,
+            callID: step.tool.callID,
+            tool: step.tool.tool,
+            args: step.tool.state.input,
+          },
+          {
+            title: step.tool.state.title,
+            output: step.tool.state.output,
+            metadata: {},
+          },
+        );
+      }
+    }
+    await completeGeneration({
+      sessionID,
+      userMessageID,
+      assistantMessageID,
+      started: startedAt + 100,
+      completed: startedAt + 400,
+    });
+    storeMessage(sessionID, {
+      info: { id: assistantMessageID, role: "assistant", sessionID },
+      parts: steps.flatMap((step) => {
+        if (snapshot === "empty-assistant") {
+          return [];
+        }
+        if (snapshot === "missing-earlier-call" && step.name === "first") {
+          return [step.marker, step.text, step.reasoning];
+        }
+        if (step.name === "first") {
+          return [step.marker, step.text, step.reasoning, step.tool];
+        }
+        if (
+          snapshot === "snapshot-only-content" ||
+          snapshot === "snapshot-ahead-of-live" ||
+          snapshot === "missing-earlier-call"
+        ) {
+          return [step.marker, step.text, step.reasoning, step.tool];
+        }
+        if (
+          snapshot === "missing-later-step" ||
+          snapshot === "live-first-marker-only"
+        ) {
+          return [];
+        }
+        const content = [
+          step.marker,
+          { ...step.text, text: "Reading" },
+          { ...step.reasoning, text: "Need" },
+        ];
+        return snapshot === "missing-later-call" ||
+          snapshot === "hook-only-results"
+          ? content
+          : [...content, step.tool];
+      }),
+    });
+    await startGeneration({
+      id: "assistant-step-history-followup",
+      sessionID,
+      assistantMessageID: "assistant-step-history-followup-message",
+      started: startedAt + 500,
+    });
+    await completeGeneration({
+      sessionID,
+      userMessageID,
+      assistantMessageID: "assistant-step-history-followup-message",
+      started: startedAt + 500,
+      completed: startedAt + 600,
+      text: "Done",
+    });
+    const { spans } = await flushSession(sessionID);
+    const followup = spans.find((span) => {
+      if (span.name !== "opencode.generation") {
+        return false;
+      }
+      const metadata = getJsonAttribute(span, "langfuse.observation.metadata");
+      return (
+        typeof metadata === "object" &&
+        metadata !== null &&
+        "messageID" in metadata &&
+        metadata.messageID === "assistant-step-history-followup-message"
+      );
+    });
+    if (!followup) {
+      throw new Error("Expected followup generation");
+    }
+    expect(getJsonAttribute(followup, "langfuse.observation.input")).toEqual([
+      { role: "user", content: [{ type: "text", text: "Read two files" }] },
+      ...steps.flatMap((step) => [
+        {
+          role: "assistant",
+          content: step.text.text,
+          thinking: [{ type: "thinking", content: step.reasoning.text }],
+          tool_calls: [
+            {
+              id: step.tool.callID,
+              name: "read",
+              arguments: JSON.stringify(step.tool.state.input),
+            },
+          ],
+        },
+        {
+          role: "tool",
+          name: "read",
+          tool_call_id: step.tool.callID,
+          content: step.tool.state.output,
+        },
+      ]),
+    ]);
+  });
+
   test("creates a nested tool observation from message parts without execution hooks", async () => {
     const sessionID = "message-part-tool-session";
     const userMessageID = "message-part-tool-user";
@@ -1649,8 +2328,10 @@ describe("built plugin", { concurrent: false }, () => {
     expect(
       getJsonAttribute(toolSpans[0], "langfuse.observation.output"),
     ).toEqual({
-      title: "Recent commits",
-      output: "07f9a68 Fix tool observation parenting",
+      role: "tool",
+      name: "bash",
+      tool_call_id: callID,
+      content: "07f9a68 Fix tool observation parenting",
     });
     expect(
       getJsonAttribute(secondGeneration, "langfuse.observation.input"),

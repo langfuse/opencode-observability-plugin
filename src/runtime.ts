@@ -11,17 +11,33 @@ import {
 } from "effect";
 
 import { createLangfuseClient, type LangfuseClient } from "./langfuse.js";
+import type { RedactionConfig } from "./redaction.js";
 
-const LangfuseCredentialsSchema = Schema.Struct({
-  publicKey: Schema.NonEmptyString,
-  secretKey: Schema.NonEmptyString,
+const RedactionConfigSchema = Schema.Struct({
+  tools: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        name: Schema.NonEmptyString,
+        path: Schema.optional(Schema.NonEmptyString),
+        input: Schema.optional(Schema.Literal("as-is", "redact")),
+        output: Schema.optional(Schema.Literal("as-is", "redact")),
+      }),
+    ),
+  ),
+});
+
+const LangfuseConfigSchema = Schema.Struct({
+  publicKey: Schema.optional(Schema.NonEmptyString),
+  secretKey: Schema.optional(Schema.NonEmptyString),
   baseUrl: Schema.optional(Schema.NonEmptyString),
   environment: Schema.optional(Schema.NonEmptyString),
   userId: Schema.optional(Schema.NonEmptyString),
   serviceName: Schema.optional(Schema.NonEmptyString),
+  redaction: Schema.optional(RedactionConfigSchema),
 });
-
-type LangfuseCredentials = typeof LangfuseCredentialsSchema.Type;
+const RedactionOnlySchema = Schema.Struct({
+  redaction: Schema.optional(RedactionConfigSchema),
+});
 
 class MissingLangfuseCredentials extends Data.TaggedError(
   "MissingLangfuseCredentials",
@@ -31,61 +47,52 @@ class ChangedLangfuseConfiguration extends Data.TaggedError(
   "ChangedLangfuseConfiguration",
 )<{ readonly message: string }> {}
 
-const loadLangfuseCredentials = Effect.gen(function* () {
-  const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
-  const secretKey = process.env.LANGFUSE_SECRET_KEY;
+class InvalidLangfuseConfiguration extends Data.TaggedError(
+  "InvalidLangfuseConfiguration",
+)<{ readonly message: string }> {}
 
-  if (
-    publicKey !== undefined &&
-    publicKey !== "" &&
-    secretKey !== undefined &&
-    secretKey !== ""
-  ) {
-    return {
-      publicKey,
-      secretKey,
-      baseUrl: process.env.LANGFUSE_BASE_URL ?? process.env.LANGFUSE_BASEURL,
-      environment: process.env.LANGFUSE_ENVIRONMENT,
-      userId: process.env.LANGFUSE_USER_ID,
-      serviceName: process.env.LANGFUSE_SERVICE_NAME,
-    } satisfies LangfuseCredentials;
-  }
-
-  const configPath = join(
-    homedir(),
-    ".config",
-    "opencode",
-    "opencode-langfuse.json",
-  );
-
-  const credentials = yield* Effect.tryPromise({
-    try: async () =>
-      Schema.decodeUnknownSync(Schema.parseJson(LangfuseCredentialsSchema))(
-        await readFile(configPath, "utf8"),
-      ),
+const loadLangfuseConfig = (useEnvironmentCredentials: boolean) =>
+  Effect.tryPromise({
+    try: async (): Promise<typeof LangfuseConfigSchema.Type> => {
+      const path = join(
+        homedir(),
+        ".config",
+        "opencode",
+        "opencode-langfuse.json",
+      );
+      let contents: string;
+      try {
+        contents = await readFile(path, "utf8");
+      } catch (error) {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "ENOENT"
+        ) {
+          return {};
+        }
+        throw error;
+      }
+      const document = Schema.decodeUnknownSync(Schema.parseJson())(contents);
+      if (
+        typeof document === "object" &&
+        document !== null &&
+        "redaction" in document
+      ) {
+        Schema.decodeUnknownSync(RedactionConfigSchema, {
+          onExcessProperty: "error",
+        })(document.redaction);
+      }
+      return useEnvironmentCredentials
+        ? Schema.decodeUnknownSync(RedactionOnlySchema)(document)
+        : Schema.decodeUnknownSync(LangfuseConfigSchema)(document);
+    },
     catch: () =>
-      new MissingLangfuseCredentials({
-        message: "Missing Langfuse credentials",
+      new InvalidLangfuseConfiguration({
+        message: "Invalid Langfuse configuration",
       }),
-  }).pipe(
-    Effect.mapError(
-      () =>
-        new MissingLangfuseCredentials({
-          message: "Missing Langfuse credentials",
-        }),
-    ),
-  );
-
-  if (!credentials.publicKey || !credentials.secretKey) {
-    return yield* Effect.fail(
-      new MissingLangfuseCredentials({
-        message: "Missing Langfuse credentials",
-      }),
-    );
-  }
-
-  return credentials;
-});
+  });
 
 /**
  * opencode disposes and re-creates plugin instances inside the same process
@@ -113,10 +120,34 @@ declare global {
 
 export const createLangfuseRuntime = (input: { opencodeVersion?: string }) =>
   Effect.gen(function* () {
-    const credentials = yield* loadLangfuseCredentials;
+    const useEnvironmentCredentials =
+      process.env.LANGFUSE_PUBLIC_KEY !== undefined &&
+      process.env.LANGFUSE_PUBLIC_KEY !== "" &&
+      process.env.LANGFUSE_SECRET_KEY !== undefined &&
+      process.env.LANGFUSE_SECRET_KEY !== "";
+    const config = yield* loadLangfuseConfig(useEnvironmentCredentials);
+    const credentials = useEnvironmentCredentials
+      ? {
+          publicKey: process.env.LANGFUSE_PUBLIC_KEY,
+          secretKey: process.env.LANGFUSE_SECRET_KEY,
+          baseUrl:
+            process.env.LANGFUSE_BASE_URL ?? process.env.LANGFUSE_BASEURL,
+          environment: process.env.LANGFUSE_ENVIRONMENT,
+          userId: process.env.LANGFUSE_USER_ID,
+          serviceName: process.env.LANGFUSE_SERVICE_NAME,
+        }
+      : config;
+    const { publicKey, secretKey } = credentials;
+    if (publicKey === undefined || secretKey === undefined) {
+      return yield* Effect.fail(
+        new MissingLangfuseCredentials({
+          message: "Missing Langfuse credentials",
+        }),
+      );
+    }
     const clientInput = {
-      publicKey: credentials.publicKey,
-      secretKey: credentials.secretKey,
+      publicKey,
+      secretKey,
       baseUrl:
         credentials.baseUrl ??
         process.env.LANGFUSE_BASE_URL ??
@@ -129,6 +160,7 @@ export const createLangfuseRuntime = (input: { opencodeVersion?: string }) =>
       userId: credentials.userId ?? process.env.LANGFUSE_USER_ID,
       serviceName: credentials.serviceName ?? process.env.LANGFUSE_SERVICE_NAME,
       opencodeVersion: input.opencodeVersion,
+      redaction: (config.redaction ?? {}) satisfies RedactionConfig,
     } satisfies Parameters<typeof createLangfuseClient>[0];
     const cacheKey = JSON.stringify(clientInput);
     const sharedClientState =

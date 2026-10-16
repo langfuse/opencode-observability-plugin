@@ -238,6 +238,36 @@ test("exports V2 parallel tool responses with explicit IDs and no duplicate cont
       ],
     })),
   ] satisfies SessionHookInputs["context"]["messages"];
+  const exportedMessages = [
+    messages[0],
+    {
+      role: "assistant",
+      content: [
+        ...messages[1].content.slice(0, 3),
+        ...calls.map((call) => ({
+          type: "tool-call",
+          toolCallId: call.id,
+          toolName: "read",
+          input: { path: call.path },
+        })),
+      ],
+    },
+    ...calls.map((call) => ({
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: call.id,
+          toolName: "read",
+          output: {
+            type: call.status === "error" ? "error-text" : "text",
+            value: call.content,
+          },
+          ...(call.status === "error" ? { isError: true } : {}),
+        },
+      ],
+    })),
+  ];
   const unexpectedApi = () => {
     throw new Error("The plugin used an unsupported mock host capability");
   };
@@ -505,7 +535,7 @@ test("exports V2 parallel tool responses with explicit IDs and no duplicate cont
     throw new Error("Expected both generations");
   }
   expect(getJsonAttribute(generation, "langfuse.observation.output")).toEqual([
-    messages[1],
+    exportedMessages[1],
   ]);
   for (const [index, call] of calls.entries()) {
     const tool = tools.find((span) => {
@@ -534,7 +564,7 @@ test("exports V2 parallel tool responses with explicit IDs and no duplicate cont
   }
   expect(getJsonAttribute(followup, "langfuse.observation.input")).toEqual({
     system: [],
-    messages,
+    messages: exportedMessages,
     tools: [],
   });
 });

@@ -5,6 +5,32 @@ import { Effect } from "effect";
 import type { ToolDefinition } from "./langfuse.js";
 import { createLangfuseRuntime } from "./runtime.js";
 
+function formatMessages(messages: SessionHooks["context"]["messages"]) {
+  return messages.map((message) => ({
+    role: message.role,
+    content: message.content.map((part) => {
+      if (part.type === "tool-call") {
+        const { id, name, ...rest } = part;
+        return { ...rest, toolCallId: id, toolName: name };
+      }
+      if (part.type === "tool-result") {
+        const { id, name, result, ...rest } = part;
+        return {
+          ...rest,
+          toolCallId: id,
+          toolName: name,
+          output:
+            result.type === "error"
+              ? { ...result, type: "error-text" }
+              : result,
+          ...(result.type === "error" ? { isError: true } : {}),
+        };
+      }
+      return part;
+    }),
+  }));
+}
+
 const LangfusePlugin = {
   id: "langfuse.observability",
   async setup(ctx) {
@@ -69,7 +95,7 @@ const LangfusePlugin = {
         );
         langfuse.setGenerationInputSnapshot(input.sessionID, {
           system: input.system,
-          messages: input.messages,
+          messages: formatMessages(input.messages),
           tools,
         });
       }),
@@ -209,12 +235,12 @@ const LangfusePlugin = {
               finish: event.data.finish,
               cost: event.data.cost,
               tokens: event.data.tokens,
-              output: [
+              output: formatMessages([
                 {
                   role: "assistant",
                   content: details.content,
                 },
-              ],
+              ]),
             });
             generationDetails.delete(event.data.assistantMessageID);
           }

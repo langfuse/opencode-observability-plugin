@@ -314,8 +314,8 @@ describe("OpenCode 2 package entrypoint", () => {
                 { type: "reasoning", text: "Thinking" },
                 {
                   type: "tool-call",
-                  id: "call-1",
-                  name: "read",
+                  toolCallId: "call-1",
+                  toolName: "read",
                   input: { path: "README.md" },
                 },
               ],

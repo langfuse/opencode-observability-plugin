@@ -74,6 +74,7 @@ function createPluginContext(input: {
   toolHook: PluginContext["tool"]["hook"];
   subscribe: PluginContext["event"]["subscribe"];
   storage?: PluginContext["storage"];
+  getSession?: PluginContext["session"]["get"];
 }) {
   const stored = new Map<
     string,
@@ -87,7 +88,7 @@ function createPluginContext(input: {
     session: {
       hook: input.sessionHook,
       create: unexpectedApi,
-      get: unexpectedApi,
+      get: input.getSession ?? unexpectedApi,
       switchAgent: unexpectedApi,
       switchModel: unexpectedApi,
       prompt: unexpectedApi,
@@ -1078,6 +1079,172 @@ test("omits V2 cost_details when OpenCode reports zero cost", async () => {
   expect(
     generations[0].attributes.map((attribute) => attribute.key),
   ).not.toContain("langfuse.observation.cost_details");
+});
+
+test("links V2 child sessions prompted before their creation event to the parent trace", async () => {
+  const { spans, collectorErrors } = await createCollector();
+  const sessionHooks = createHookRegistry<SessionHookInputs>();
+  const toolHooks = createHookRegistry<ToolHookInputs>();
+  const parentPrompted = Promise.withResolvers<undefined>();
+  const parentStepStarted = Promise.withResolvers<undefined>();
+  const childPrompted = Promise.withResolvers<undefined>();
+  const eventsFinished = Promise.withResolvers<undefined>();
+  const parentSessionID =
+    Schema.decodeUnknownSync(SessionIDSchema)("v2-parent-session");
+  const childSessionID =
+    Schema.decodeUnknownSync(SessionIDSchema)("v2-child-session");
+  const parentAssistantMessageID = Schema.decodeUnknownSync(MessageIDSchema)(
+    "v2-parent-assistant",
+  );
+  const childAssistantMessageID =
+    Schema.decodeUnknownSync(MessageIDSchema)("v2-child-assistant");
+  const agent = Agent.ID.make("build");
+  const model = {
+    id: Model.ID.make("test-model"),
+    providerID: Provider.ID.make("test-provider"),
+  };
+  const tokens = {
+    input: 10,
+    output: 5,
+    reasoning: 0,
+    cache: { read: 0, write: 0 },
+  };
+  const context = createPluginContext({
+    sessionHook: sessionHooks.register,
+    toolHook: toolHooks.register,
+    getSession: ({ sessionID }) =>
+      Promise.resolve({
+        id: sessionID,
+        ...(sessionID === childSessionID ? { parentID: parentSessionID } : {}),
+        projectID: "test-project",
+        cost: 0,
+        tokens,
+        time: { created: Date.now(), updated: Date.now() },
+        location: { directory: "/test" },
+      }),
+    subscribe: () => ({
+      async *[Symbol.asyncIterator]() {
+        await parentPrompted.promise;
+        yield {
+          type: "session.step.started",
+          id: "v2-parent-step-started",
+          created: Date.now(),
+          durable: {
+            aggregateID: parentSessionID,
+            seq: 1,
+            version: 1 as const,
+          },
+          data: {
+            sessionID: parentSessionID,
+            assistantMessageID: parentAssistantMessageID,
+            agent,
+            model,
+          },
+        };
+        parentStepStarted.resolve(undefined);
+        // OpenCode prompts a child session before its creation event is delivered.
+        await childPrompted.promise;
+        yield {
+          type: "session.created",
+          id: "v2-child-created",
+          created: Date.now(),
+          durable: { aggregateID: childSessionID, seq: 1, version: 1 as const },
+          data: {
+            sessionID: childSessionID,
+            projectID: "test-project",
+            location: { directory: "/test" },
+            parentID: parentSessionID,
+            slug: "child",
+            version: "2.0.4",
+          },
+        };
+        for (const [sessionID, assistantMessageID] of [
+          [childSessionID, childAssistantMessageID],
+          [parentSessionID, parentAssistantMessageID],
+        ] as const) {
+          if (sessionID === childSessionID) {
+            yield {
+              type: "session.step.started",
+              id: `${assistantMessageID}-started`,
+              created: Date.now(),
+              durable: { aggregateID: sessionID, seq: 2, version: 1 as const },
+              data: { sessionID, assistantMessageID, agent, model },
+            };
+          }
+          yield {
+            type: "session.step.ended",
+            id: `${assistantMessageID}-ended`,
+            created: Date.now(),
+            durable: { aggregateID: sessionID, seq: 3, version: 1 as const },
+            data: {
+              sessionID,
+              assistantMessageID,
+              finish: "stop",
+              cost: 0,
+              tokens,
+            },
+          };
+          yield {
+            type: "session.execution.succeeded",
+            id: `${sessionID}-succeeded`,
+            created: Date.now(),
+            durable: { aggregateID: sessionID, seq: 4, version: 1 as const },
+            data: { sessionID },
+          };
+        }
+        eventsFinished.resolve(undefined);
+      },
+    }),
+  });
+
+  const cleanup = await LangfusePlugin.setup(context);
+  await sessionHooks.run("prompt", {
+    sessionID: parentSessionID,
+    messageID: Schema.decodeUnknownSync(MessageIDSchema)("v2-parent-user"),
+    prompt: { text: "Delegate this investigation" },
+    delivery: "steer",
+  });
+  parentPrompted.resolve(undefined);
+  await parentStepStarted.promise;
+  await sessionHooks.run("prompt", {
+    sessionID: childSessionID,
+    messageID: Schema.decodeUnknownSync(MessageIDSchema)("v2-child-user"),
+    prompt: { text: "Inspect the child scope" },
+    delivery: "steer",
+  });
+  childPrompted.resolve(undefined);
+  await eventsFinished.promise;
+  await cleanup?.();
+
+  expect(collectorErrors).toEqual([]);
+  const getSessionSpan = (name: string, sessionID: string) => {
+    const span = spans.find(
+      (candidate) =>
+        candidate.name === name &&
+        candidate.attributes.some(
+          (attribute) =>
+            attribute.key === "session.id" &&
+            attribute.value.stringValue === sessionID,
+        ),
+    );
+    if (!span) {
+      throw new Error(`Expected ${name} span for ${sessionID}`);
+    }
+    return span;
+  };
+  const parentGeneration = getSessionSpan(
+    "opencode.generation",
+    parentSessionID,
+  );
+  const childTurn = getSessionSpan("opencode.turn", childSessionID);
+  const childGeneration = getSessionSpan("opencode.generation", childSessionID);
+  expect(childTurn.traceId).toBe(parentGeneration.traceId);
+  expect(childTurn.parentSpanId).toBe(parentGeneration.spanId);
+  expect(
+    getJsonAttribute(childTurn, "langfuse.observation.metadata"),
+  ).toMatchObject({ parentSessionID });
+  expect(childGeneration.traceId).toBe(parentGeneration.traceId);
+  expect(childGeneration.parentSpanId).toBe(childTurn.spanId);
 });
 
 const runtime = vi.hoisted(() => ({

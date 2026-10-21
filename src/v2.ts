@@ -111,6 +111,7 @@ const LangfusePlugin = {
     const abort = new AbortController();
     const registrations: { dispose: () => Promise<void> }[] = [];
     const userMessageIDs = new Map<string, string>();
+    const resolvedSessionParents = new Set<string>();
     const generationDetails = new Map<
       string,
       {
@@ -125,6 +126,23 @@ const LangfusePlugin = {
 
     registrations.push(
       await ctx.session.hook("prompt", async (input) => {
+        // OpenCode can prompt a child session before session.created reaches the event loop.
+        if (!resolvedSessionParents.has(input.sessionID)) {
+          try {
+            const session = await ctx.session.get({
+              sessionID: input.sessionID,
+            });
+            langfuse.rememberSessionParent({
+              sessionID: input.sessionID,
+              parentSessionID: session.parentID,
+            });
+            resolvedSessionParents.add(input.sessionID);
+          } catch (error) {
+            console.warn(
+              `Langfuse session parent lookup failed: ${String(error)}`,
+            );
+          }
+        }
         userMessageIDs.set(input.sessionID, input.messageID);
         langfuse.traceUserPrompt({
           sessionID: input.sessionID,
@@ -251,6 +269,7 @@ const LangfusePlugin = {
               sessionID: event.data.sessionID,
               parentSessionID: event.data.parentID,
             });
+            resolvedSessionParents.add(event.data.sessionID);
           }
 
           if (event.type === "session.step.started") {
@@ -407,6 +426,7 @@ const LangfusePlugin = {
 
           if (event.type === "session.deleted") {
             langfuse.clearSessionTraceState(event.data.sessionID);
+            resolvedSessionParents.delete(event.data.sessionID);
             try {
               let after: string | undefined;
               do {

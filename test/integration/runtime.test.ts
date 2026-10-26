@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Effect } from "effect";
@@ -106,6 +106,58 @@ describe("Langfuse runtime", () => {
     expect(error).toMatchObject({
       _tag: "ChangedLangfuseConfiguration",
     });
+  });
+
+  test("loads config file tags and lets plugin options override them", async () => {
+    const clientInputs: { tags?: string[] }[] = [];
+    const client = { id: "tags-client" };
+
+    vi.doMock("../../src/langfuse.js", () => ({
+      createLangfuseClient: (input: { tags?: string[] }) => {
+        clientInputs.push(input);
+        return Effect.succeed(client);
+      },
+    }));
+
+    temporaryHome = await mkdtemp(join(process.cwd(), ".test-runtime-"));
+    process.env.HOME = temporaryHome;
+    delete process.env.LANGFUSE_PUBLIC_KEY;
+    delete process.env.LANGFUSE_SECRET_KEY;
+    const configDirectory = join(temporaryHome, ".config", "opencode");
+    await mkdir(configDirectory, { recursive: true });
+    await writeFile(
+      join(configDirectory, "opencode-langfuse.json"),
+      JSON.stringify({
+        publicKey: "pk-config",
+        secretKey: "sk-config",
+        tags: ["from-config"],
+      }),
+    );
+
+    const { createLangfuseRuntime } = await import("../../src/runtime.js");
+
+    await Effect.runPromise(createLangfuseRuntime({}));
+    globalThis.langfuseOpencodeRuntimeState = undefined;
+    await Effect.runPromise(createLangfuseRuntime({ tags: ["from-options"] }));
+
+    expect(clientInputs.map((input) => input.tags)).toEqual([
+      ["from-config"],
+      ["from-options"],
+    ]);
+  });
+
+  test("decodes the tags plugin option", async () => {
+    const { decodePluginTags } = await import("../../src/runtime.js");
+
+    expect(decodePluginTags({ tags: ["a", "b"] })).toEqual(["a", "b"]);
+    expect(decodePluginTags({})).toBeUndefined();
+    expect(decodePluginTags(undefined)).toBeUndefined();
+    expect(decodePluginTags(null)).toBeUndefined();
+    expect(decodePluginTags({ tags: "not-an-array" })).toBeUndefined();
+    expect(decodePluginTags({ tags: ["", "valid"] })).toBeUndefined();
+    expect(decodePluginTags({ tags: null })).toBeUndefined();
+    expect(decodePluginTags({ tags: [] })).toEqual([]);
+    expect(decodePluginTags({ tags: ["a"], unknownKey: 1 })).toEqual(["a"]);
   });
 
   test("does not accept empty environment credentials", async () => {

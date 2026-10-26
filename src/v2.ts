@@ -3,7 +3,7 @@ import type { SessionHooks } from "@opencode/plugin/promise/session";
 import { Effect, Schema } from "effect";
 
 import type { ToolDefinition } from "./langfuse.js";
-import { createLangfuseRuntime } from "./runtime.js";
+import { createLangfuseRuntime, decodePluginTags } from "./runtime.js";
 import { PLUGIN_VERSION } from "./version.js";
 
 const SpanContextSchema = Schema.Struct({
@@ -57,8 +57,15 @@ const LangfusePlugin = {
         console.warn(`[Langfuse tracing disabled] ${error.message}`);
       }).pipe(Effect.as(undefined));
 
+    const tags = decodePluginTags(ctx.options);
+    if (ctx.options.tags !== undefined && tags === undefined) {
+      console.warn(
+        `[Langfuse] Ignoring invalid plugin option "tags"; expected an array of non-empty strings`,
+      );
+    }
+
     const langfuse = await Effect.runPromise(
-      createLangfuseRuntime({ opencodeVersion: ctx.app.version }).pipe(
+      createLangfuseRuntime({ opencodeVersion: ctx.app.version, tags }).pipe(
         Effect.catchTag("MissingLangfuseCredentials", disableTracing),
       ),
     );

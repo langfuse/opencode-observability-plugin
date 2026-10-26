@@ -7,7 +7,7 @@ import {
   type ToolDefinition,
 } from "./langfuse.js";
 import { OpencodeClientService } from "./opencode.js";
-import { createLangfuseRuntime } from "./runtime.js";
+import { createLangfuseRuntime, decodePluginTags } from "./runtime.js";
 import {
   McpContentSchema,
   McpToolResultSchema,
@@ -336,202 +336,213 @@ const normalizeToolResult = (tool: string, output: unknown) => {
   return { title: tool, output: "", isError: false, unexpected: true };
 };
 
-const main = Effect.gen(function* () {
-  const opencode = yield* OpencodeClientService;
-  const disableTracing = (error: { readonly message: string }) =>
-    log("warn", `[Tracing disabled] ${error.message}`).pipe(
-      Effect.as(undefined),
+const main = (tags: string[] | undefined) =>
+  Effect.gen(function* () {
+    const opencode = yield* OpencodeClientService;
+    const disableTracing = (error: { readonly message: string }) =>
+      log("warn", `[Tracing disabled] ${error.message}`).pipe(
+        Effect.as(undefined),
+      );
+
+    const langfuse = yield* createLangfuseRuntime({ tags }).pipe(
+      Effect.catchTag("MissingLangfuseCredentials", disableTracing),
     );
 
-  const langfuse = yield* createLangfuseRuntime({}).pipe(
-    Effect.catchTag("MissingLangfuseCredentials", disableTracing),
-  );
+    if (!langfuse) {
+      return {};
+    }
 
-  if (!langfuse) {
-    return {};
-  }
+    yield* log("info", `OTEL tracing initialized → ${langfuse.baseUrl}`);
 
-  yield* log("info", `OTEL tracing initialized → ${langfuse.baseUrl}`);
-
-  const hooksLayer = Layer.merge(
-    Layer.succeed(OpencodeClientService, opencode),
-    Layer.succeed(LangfuseClientService, langfuse),
-  );
-
-  const finalizeTracing = Effect.sync(() => {
-    langfuse.endActiveToolObservations();
-    langfuse.endActiveGenerationSteps();
-    langfuse.endActiveTurnObservations();
-    langfuse.clearTraceState();
-  });
-  const toolDefinitions = new Map<string, Promise<ToolDefinition[]>>();
-
-  const runHook = (
-    hookName: string,
-    effect: Effect.Effect<
-      unknown,
-      unknown,
-      OpencodeClientService | LangfuseClientService
-    >,
-  ) =>
-    Effect.runPromise(
-      effect.pipe(
-        Effect.catchDefect((defect) =>
-          log(
-            "error",
-            `Langfuse hook "${hookName}" failed: ${formatHookError(defect)}`,
-          ).pipe(Effect.catch(() => Effect.void)),
-        ),
-        Effect.catch((error) =>
-          log(
-            "error",
-            `Langfuse hook "${hookName}" failed: ${formatHookError(error)}`,
-          ).pipe(Effect.catch(() => Effect.void)),
-        ),
-        Effect.asVoid,
-        Effect.provide(hooksLayer),
-      ),
+    const hooksLayer = Layer.merge(
+      Layer.succeed(OpencodeClientService, opencode),
+      Layer.succeed(LangfuseClientService, langfuse),
     );
 
-  const hooks: Hooks = {
-    dispose: () =>
-      runHook(
-        "dispose",
-        finalizeTracing.pipe(Effect.andThen(langfuse.forceFlush)),
-      ),
+    const finalizeTracing = Effect.sync(() => {
+      langfuse.endActiveToolObservations();
+      langfuse.endActiveGenerationSteps();
+      langfuse.endActiveTurnObservations();
+      langfuse.clearTraceState();
+    });
+    const toolDefinitions = new Map<string, Promise<ToolDefinition[]>>();
 
-    event: ({ event }) => runHook("event", eventHook(event)),
+    const runHook = (
+      hookName: string,
+      effect: Effect.Effect<
+        unknown,
+        unknown,
+        OpencodeClientService | LangfuseClientService
+      >,
+    ) =>
+      Effect.runPromise(
+        effect.pipe(
+          Effect.catchDefect((defect) =>
+            log(
+              "error",
+              `Langfuse hook "${hookName}" failed: ${formatHookError(defect)}`,
+            ).pipe(Effect.catch(() => Effect.void)),
+          ),
+          Effect.catch((error) =>
+            log(
+              "error",
+              `Langfuse hook "${hookName}" failed: ${formatHookError(error)}`,
+            ).pipe(Effect.catch(() => Effect.void)),
+          ),
+          Effect.asVoid,
+          Effect.provide(hooksLayer),
+        ),
+      );
 
-    "chat.message": (input, output) =>
-      runHook(
-        "chat.message",
-        Effect.gen(function* () {
-          let tools: ToolDefinition[] | undefined;
+    const hooks: Hooks = {
+      dispose: () =>
+        runHook(
+          "dispose",
+          finalizeTracing.pipe(Effect.andThen(langfuse.forceFlush)),
+        ),
 
-          if (input.model) {
-            const enabledTools = output.message.tools;
-            const cacheKey = JSON.stringify([
-              input.model.providerID,
-              input.model.modelID,
-              enabledTools,
-            ]);
-            let pendingTools = toolDefinitions.get(cacheKey);
+      event: ({ event }) => runHook("event", eventHook(event)),
 
-            if (!pendingTools) {
-              pendingTools = opencode.tool
-                .list({
-                  query: {
-                    provider: input.model.providerID,
-                    model: input.model.modelID,
-                  },
-                })
-                .then(({ data }) =>
-                  (data ?? [])
-                    .filter((tool) => enabledTools?.[tool.id] !== false)
-                    .map((tool) => ({
-                      name: tool.id,
-                      description: tool.description,
-                      ...(typeof tool.parameters === "object" &&
-                      tool.parameters !== null &&
-                      !Array.isArray(tool.parameters)
-                        ? {
-                            parameters: tool.parameters,
-                          }
-                        : {}),
-                    })),
-                )
-                .catch(() => {
-                  toolDefinitions.delete(cacheKey);
-                  return [];
-                });
-              toolDefinitions.set(cacheKey, pendingTools);
+      "chat.message": (input, output) =>
+        runHook(
+          "chat.message",
+          Effect.gen(function* () {
+            let tools: ToolDefinition[] | undefined;
+
+            if (input.model) {
+              const enabledTools = output.message.tools;
+              const cacheKey = JSON.stringify([
+                input.model.providerID,
+                input.model.modelID,
+                enabledTools,
+              ]);
+              let pendingTools = toolDefinitions.get(cacheKey);
+
+              if (!pendingTools) {
+                pendingTools = opencode.tool
+                  .list({
+                    query: {
+                      provider: input.model.providerID,
+                      model: input.model.modelID,
+                    },
+                  })
+                  .then(({ data }) =>
+                    (data ?? [])
+                      .filter((tool) => enabledTools?.[tool.id] !== false)
+                      .map((tool) => ({
+                        name: tool.id,
+                        description: tool.description,
+                        ...(typeof tool.parameters === "object" &&
+                        tool.parameters !== null &&
+                        !Array.isArray(tool.parameters)
+                          ? {
+                              parameters: tool.parameters,
+                            }
+                          : {}),
+                      })),
+                  )
+                  .catch(() => {
+                    toolDefinitions.delete(cacheKey);
+                    return [];
+                  });
+                toolDefinitions.set(cacheKey, pendingTools);
+              }
+
+              tools = yield* Effect.promise(() => pendingTools);
             }
 
-            tools = yield* Effect.promise(() => pendingTools);
-          }
-
-          yield* Effect.sync(() => {
-            langfuse.traceUserMessage({
-              sessionID: input.sessionID,
-              messageID: input.messageID,
-              agent: input.agent,
-              model: input.model,
-              parts: output.parts,
-              tools,
-            });
-          });
-        }),
-      ),
-
-    "tool.execute.before": (input, output) =>
-      runHook(
-        "tool.execute.before",
-        Effect.try({
-          try: () => {
-            langfuse.traceToolStart({
-              sessionID: input.sessionID,
-              callID: input.callID,
-              tool: input.tool,
-              args: output.args,
-            });
-          },
-          catch: (error) => error,
-        }),
-      ),
-
-    "tool.execute.after": (input, output) =>
-      runHook(
-        "tool.execute.after",
-        Effect.gen(function* () {
-          const normalized = normalizeToolResult(input.tool, output);
-
-          if (normalized.unexpected) {
-            yield* log(
-              "warn",
-              `Tool "${input.tool}" returned an unrecognized result shape; recording empty output`,
-            );
-          }
-
-          if (normalized.isError) {
             yield* Effect.sync(() => {
-              langfuse.traceToolError({
+              langfuse.traceUserMessage({
                 sessionID: input.sessionID,
-                callID: input.callID,
-                tool: input.tool,
-                args: input.args,
-                error:
-                  normalized.output ||
-                  `MCP tool "${input.tool}" returned an error`,
-                completed: Date.now(),
+                messageID: input.messageID,
+                agent: input.agent,
+                model: input.model,
+                parts: output.parts,
+                tools,
               });
             });
-            return;
-          }
+          }),
+        ),
 
-          yield* Effect.try({
+      "tool.execute.before": (input, output) =>
+        runHook(
+          "tool.execute.before",
+          Effect.try({
             try: () => {
-              langfuse.traceToolEnd({
+              langfuse.traceToolStart({
                 sessionID: input.sessionID,
                 callID: input.callID,
                 tool: input.tool,
-                args: input.args,
-                title: normalized.title,
-                output: normalized.output,
+                args: output.args,
               });
             },
             catch: (error) => error,
-          });
-        }),
-      ),
-  };
+          }),
+        ),
 
-  return hooks;
-});
+      "tool.execute.after": (input, output) =>
+        runHook(
+          "tool.execute.after",
+          Effect.gen(function* () {
+            const normalized = normalizeToolResult(input.tool, output);
 
-const LangfusePlugin: Plugin = async ({ client }) => {
+            if (normalized.unexpected) {
+              yield* log(
+                "warn",
+                `Tool "${input.tool}" returned an unrecognized result shape; recording empty output`,
+              );
+            }
+
+            if (normalized.isError) {
+              yield* Effect.sync(() => {
+                langfuse.traceToolError({
+                  sessionID: input.sessionID,
+                  callID: input.callID,
+                  tool: input.tool,
+                  args: input.args,
+                  error:
+                    normalized.output ||
+                    `MCP tool "${input.tool}" returned an error`,
+                  completed: Date.now(),
+                });
+              });
+              return;
+            }
+
+            yield* Effect.try({
+              try: () => {
+                langfuse.traceToolEnd({
+                  sessionID: input.sessionID,
+                  callID: input.callID,
+                  tool: input.tool,
+                  args: input.args,
+                  title: normalized.title,
+                  output: normalized.output,
+                });
+              },
+              catch: (error) => error,
+            });
+          }),
+        ),
+    };
+
+    return hooks;
+  });
+
+const LangfusePlugin: Plugin = async ({ client }, options) => {
   const clientLayer = Layer.succeed(OpencodeClientService, client);
+  const tags = decodePluginTags(options);
 
-  return Effect.runPromise(main.pipe(Effect.provide(clientLayer)));
+  if (options?.tags !== undefined && tags === undefined) {
+    await Effect.runPromise(
+      log(
+        "warn",
+        `Ignoring invalid plugin option "tags"; expected an array of non-empty strings`,
+      ).pipe(Effect.provide(clientLayer)),
+    );
+  }
+
+  return Effect.runPromise(main(tags).pipe(Effect.provide(clientLayer)));
 };
 
 export default LangfusePlugin;

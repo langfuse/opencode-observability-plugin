@@ -47,11 +47,32 @@ Create `~/.config/opencode/opencode-langfuse.json` with your Langfuse credential
   "secretKey": "sk-lf-...",
   "baseUrl": "https://cloud.langfuse.com",
   "environment": "development",
-  "userId": "your-user-id"
+  "userId": "your-user-id",
+  "tags": ["app:my-app"]
 }
 ```
 
 Only `publicKey` and `secretKey` are required. If `baseUrl` is not set, the plugin uses `https://cloud.langfuse.com`. If `environment` is not set, it uses `development`.
+
+`tags` sets Langfuse trace tags on every trace. It accepts an array of non-empty strings and can also be provided as a plugin option in the OpenCode config, which takes precedence over the config file:
+
+```json
+{
+  "plugins": [
+    ["@langfuse/opencode-observability-plugin", { "tags": ["app:my-app"] }]
+  ]
+}
+```
+
+For OpenCode 1, use the same option under `plugin`:
+
+```json
+{
+  "plugin": [
+    ["@langfuse/opencode-observability-plugin", { "tags": ["app:my-app"] }]
+  ]
+}
+```
 
 You can also set credentials with environment variables:
 

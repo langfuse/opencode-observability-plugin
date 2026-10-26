@@ -1990,6 +1990,16 @@ const makeUserIdSpanProcessor = (userId: string) =>
     forceFlush: () => Promise.resolve(),
   }) satisfies SpanProcessor;
 
+const makeTagsSpanProcessor = (tags: string[]) =>
+  ({
+    onStart: (span: Span) => {
+      span.setAttribute("langfuse.trace.tags", tags);
+    },
+    onEnd: () => undefined,
+    shutdown: () => Promise.resolve(),
+    forceFlush: () => Promise.resolve(),
+  }) satisfies SpanProcessor;
+
 const makePluginVersionSpanProcessor = () =>
   ({
     onStart: (span: Span) => {
@@ -2038,6 +2048,7 @@ export const createLangfuseClient = (input: {
   environment: string;
   userId?: string;
   serviceName?: string;
+  tags?: string[];
   opencodeVersion?: string;
 }) =>
   Effect.sync(() => {
@@ -2066,6 +2077,9 @@ export const createLangfuseClient = (input: {
           : []),
         ...(input.userId != null
           ? [makeUserIdSpanProcessor(input.userId)]
+          : []),
+        ...(input.tags != null && input.tags.length > 0
+          ? [makeTagsSpanProcessor(input.tags)]
           : []),
         processor,
         makeAppRootSpanProcessor(tracerName),

@@ -38,7 +38,16 @@ const SpanSchema = Schema.Struct({
   attributes: Schema.Array(
     Schema.Struct({
       key: Schema.String,
-      value: Schema.Struct({ stringValue: Schema.optional(Schema.String) }),
+      value: Schema.Struct({
+        stringValue: Schema.optional(Schema.String),
+        arrayValue: Schema.optional(
+          Schema.Struct({
+            values: Schema.Array(
+              Schema.Struct({ stringValue: Schema.optional(Schema.String) }),
+            ),
+          }),
+        ),
+      }),
     }),
   ),
   status: Schema.optional(
@@ -75,6 +84,7 @@ function createPluginContext(input: {
   subscribe: PluginContext["event"]["subscribe"];
   storage?: PluginContext["storage"];
   getSession?: PluginContext["session"]["get"];
+  options?: PluginContext["options"];
 }) {
   const stored = new Map<
     string,
@@ -107,10 +117,8 @@ function createPluginContext(input: {
       reload: unexpectedApi,
     },
     event: { subscribe: input.subscribe },
+    options: input.options ?? {},
     get location() {
-      return unexpectedApi();
-    },
-    get options() {
       return unexpectedApi();
     },
     get agent() {
@@ -1079,6 +1087,100 @@ test("omits V2 cost_details when OpenCode reports zero cost", async () => {
   expect(
     generations[0].attributes.map((attribute) => attribute.key),
   ).not.toContain("langfuse.observation.cost_details");
+  expect(
+    spans.some((span) =>
+      span.attributes.some(
+        (attribute) => attribute.key === "langfuse.trace.tags",
+      ),
+    ),
+  ).toBe(false);
+});
+
+test("applies plugin option tags to exported spans", async () => {
+  const { spans, collectorErrors } = await createCollector();
+  const sessionID = Schema.decodeUnknownSync(SessionIDSchema)("v2-tags");
+  const assistantMessageID =
+    Schema.decodeUnknownSync(MessageIDSchema)("v2-tags-assistant");
+  const tokens = {
+    input: 10,
+    output: 5,
+    reasoning: 0,
+    cache: { read: 0, write: 0 },
+  };
+  const eventsFinished = Promise.withResolvers<undefined>();
+  const registration = { dispose: () => Promise.resolve() };
+  const sessionHooks = createHookRegistry<SessionHookInputs>();
+  const context = createPluginContext({
+    sessionHook: sessionHooks.register,
+    toolHook: () => Promise.resolve(registration),
+    options: { tags: ["app:tags-test"] },
+    subscribe: () => ({
+      async *[Symbol.asyncIterator]() {
+        try {
+          await sessionHooks.run("prompt", {
+            sessionID,
+            messageID:
+              Schema.decodeUnknownSync(MessageIDSchema)("v2-tags-user"),
+            prompt: { text: "Tag this trace" },
+            delivery: "steer",
+          });
+          yield {
+            id: "v2-tags-started",
+            durable: { aggregateID: sessionID, seq: 1, version: 1 as const },
+            type: "session.step.started",
+            created: Date.now(),
+            data: {
+              sessionID,
+              assistantMessageID,
+              agent: Agent.ID.make("build"),
+              model: {
+                id: Model.ID.make("test-model"),
+                providerID: Provider.ID.make("test-provider"),
+              },
+            },
+          };
+          yield {
+            id: "v2-tags-ended",
+            durable: { aggregateID: sessionID, seq: 2, version: 1 as const },
+            type: "session.step.ended",
+            created: Date.now(),
+            data: {
+              sessionID,
+              assistantMessageID,
+              finish: "stop",
+              cost: 0,
+              tokens,
+            },
+          };
+          yield {
+            id: "v2-tags-succeeded",
+            durable: { aggregateID: sessionID, seq: 3, version: 1 as const },
+            type: "session.execution.succeeded",
+            created: Date.now(),
+            data: { sessionID },
+          };
+        } finally {
+          eventsFinished.resolve(undefined);
+        }
+      },
+    }),
+  });
+
+  const cleanup = await LangfusePlugin.setup(context);
+  if (!cleanup) {
+    throw new Error("Expected plugin cleanup");
+  }
+  onTestFinished(cleanup);
+  await eventsFinished.promise;
+
+  expect(collectorErrors).toEqual([]);
+  const tagged = spans.filter((span) => {
+    const values = span.attributes.find(
+      (attribute) => attribute.key === "langfuse.trace.tags",
+    )?.value.arrayValue?.values;
+    return values?.length === 1 && values[0].stringValue === "app:tags-test";
+  });
+  expect(tagged.length).toBeGreaterThan(0);
 });
 
 test("links V2 child sessions prompted before their creation event to the parent trace", async () => {
@@ -1271,11 +1373,16 @@ const runtime = vi.hoisted(() => ({
   forceFlush: vi.fn(),
 }));
 
-vi.mock("../../src/runtime.js", async () => {
+vi.mock("../../src/runtime.js", async (importOriginal) => {
   const { Effect } = await import("effect");
+  const actual = await importOriginal<typeof import("../../src/runtime.js")>();
 
   return {
-    createLangfuseRuntime: (input: { opencodeVersion?: string }) => {
+    ...actual,
+    createLangfuseRuntime: (input: {
+      opencodeVersion?: string;
+      tags?: string[];
+    }) => {
       runtime.createLangfuseRuntime(input);
       return Effect.succeed({
         ...runtime,
@@ -1315,6 +1422,7 @@ describe("OpenCode 2 package entrypoint", () => {
     const registration = { dispose: vi.fn(() => Promise.resolve()) };
     const contextInput: unknown = {
       app: { version: "2.0.4" },
+      options: {},
       session: { hook: vi.fn(() => Promise.resolve(registration)) },
       tool: { hook: vi.fn(() => Promise.resolve(registration)) },
       event: {
@@ -1384,6 +1492,7 @@ describe("OpenCode 2 package entrypoint", () => {
     const registration = { dispose: vi.fn(() => Promise.resolve()) };
     const contextInput: unknown = {
       app: { version: "2.0.4" },
+      options: {},
       session: { hook: vi.fn(() => Promise.resolve(registration)) },
       tool: { hook: vi.fn(() => Promise.resolve(registration)) },
       event: {
@@ -1436,6 +1545,7 @@ describe("OpenCode 2 package entrypoint", () => {
     const registration = { dispose: vi.fn(() => Promise.resolve()) };
     const contextInput: unknown = {
       app: { version: "2.0.4" },
+      options: {},
       session: {
         hook: vi.fn((name: string, handler: typeof prompt) => {
           if (name === "prompt") {
@@ -1585,6 +1695,7 @@ describe("OpenCode 2 package entrypoint", () => {
       const registration = { dispose: vi.fn(() => Promise.resolve()) };
       const contextInput: unknown = {
         app: { version: "2.0.4" },
+        options: {},
         session: { hook: vi.fn(() => Promise.resolve(registration)) },
         tool: {
           hook: vi.fn((name: string, handler: typeof executeBefore) => {
@@ -1701,6 +1812,7 @@ describe("OpenCode 2 package entrypoint", () => {
     const registration = { dispose: vi.fn(() => Promise.resolve()) };
     const contextInput: unknown = {
       app: { version: "2.0.4" },
+      options: {},
       session: {
         hook: vi.fn((name: string, handler: typeof context) => {
           if (name === "context") {

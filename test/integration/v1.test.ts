@@ -27,6 +27,13 @@ const OtlpValueSchema = Schema.Struct({
   stringValue: Schema.optional(Schema.String),
   boolValue: Schema.optional(Schema.Boolean),
   intValue: Schema.optional(Schema.Number),
+  arrayValue: Schema.optional(
+    Schema.Struct({
+      values: Schema.Array(
+        Schema.Struct({ stringValue: Schema.optional(Schema.String) }),
+      ),
+    }),
+  ),
 });
 const OtlpAttributeSchema = Schema.Struct({
   key: Schema.String,
@@ -459,7 +466,10 @@ const completeGeneration = async (input: {
   });
 };
 
-const createHooks = async (baseUrl: string) => {
+const createHooks = async (
+  baseUrl: string,
+  options?: Parameters<Plugin>[1],
+) => {
   process.env.LANGFUSE_BASE_URL = baseUrl;
   const client = Schema.decodeUnknownSync(PluginClientSchema)({
     app: {
@@ -505,7 +515,10 @@ const createHooks = async (baseUrl: string) => {
     },
   });
 
-  return plugin(Schema.decodeUnknownSync(PluginInputSchema)({ client }));
+  return plugin(
+    Schema.decodeUnknownSync(PluginInputSchema)({ client }),
+    options,
+  );
 };
 
 const disposeHooks = async () => {
@@ -3591,6 +3604,29 @@ describe("built plugin", { concurrent: false }, () => {
         "langfuse.observation.cost_details",
       );
     }
+  });
+
+  test("applies plugin option tags to exported spans", async () => {
+    await disposeHooks();
+    hooksDisposed = false;
+    hooks = await createHooks(collectorBaseUrl, { tags: ["app:v1-tags"] });
+
+    const sessionID = "v1-tags-session";
+    await sendUserMessage({
+      sessionID,
+      messageID: "v1-tags-user",
+      text: "Tag this trace",
+      started: startedAt,
+    });
+
+    const { spans } = await flushSession(sessionID);
+    const tagged = spans.filter((span) => {
+      const values = span.attributes.find(
+        (attribute) => attribute.key === "langfuse.trace.tags",
+      )?.value.arrayValue?.values;
+      return values?.length === 1 && values[0].stringValue === "app:v1-tags";
+    });
+    expect(tagged.length).toBeGreaterThan(0);
   });
 
   test("can be disposed repeatedly", async () => {

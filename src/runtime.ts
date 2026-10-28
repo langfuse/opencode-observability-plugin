@@ -73,23 +73,24 @@ const loadLangfuseCredentials = Effect.gen(function* () {
     "opencode-langfuse.json",
   );
 
-  const credentials = yield* Effect.tryPromise({
-    try: async () =>
-      Schema.decodeUnknownSync(
-        Schema.fromJsonString(LangfuseCredentialsSchema),
-      )(await readFile(configPath, "utf8")),
+  const config = yield* Effect.tryPromise({
+    try: () => readFile(configPath, "utf8"),
     catch: () =>
       new MissingLangfuseCredentials({
         message: "Missing Langfuse credentials",
       }),
-  }).pipe(
-    Effect.mapError(
-      () =>
-        new MissingLangfuseCredentials({
-          message: "Missing Langfuse credentials",
-        }),
-    ),
-  );
+  });
+
+  const credentials = yield* Effect.try({
+    try: () =>
+      Schema.decodeUnknownSync(
+        Schema.fromJsonString(LangfuseCredentialsSchema),
+      )(config),
+    catch: () =>
+      new MissingLangfuseCredentials({
+        message: `Invalid Langfuse config at ${configPath}. Check JSON syntax and field types; publicKey and secretKey must be non-empty strings, and "tags" must be an array of non-empty strings if provided`,
+      }),
+  });
 
   if (!credentials.publicKey || !credentials.secretKey) {
     return yield* Effect.fail(

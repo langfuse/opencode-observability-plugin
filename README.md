@@ -84,7 +84,7 @@ export LANGFUSE_ENVIRONMENT="development"
 export LANGFUSE_USER_ID="your-user-id"
 ```
 
-If both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set, the plugin uses environment variables instead of reading the config file. Optional values can be supplied either way.
+If both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are non-empty, the plugin uses environment variables instead of reading the config file, so config-file `tags` are ignored too. To set tags when using environment credentials, provide `tags` as a plugin option in the OpenCode config. There is no environment variable for tags.
 
 ## Contributing
 

@@ -59,7 +59,12 @@ Only `publicKey` and `secretKey` are required. If `baseUrl` is not set, the plug
 ```json
 {
   "plugins": [
-    ["@langfuse/opencode-observability-plugin", { "tags": ["app:my-app"] }]
+    {
+      "package": "@langfuse/opencode-observability-plugin",
+      "options": {
+        "tags": ["app:my-app"]
+      }
+    }
   ]
 }
 ```

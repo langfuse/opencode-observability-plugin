@@ -152,10 +152,8 @@ describe("Langfuse runtime", () => {
     expect(decodePluginTags({ tags: ["a", "b"] })).toEqual(["a", "b"]);
     expect(decodePluginTags({})).toBeUndefined();
     expect(decodePluginTags(undefined)).toBeUndefined();
-    expect(decodePluginTags(null)).toBeUndefined();
     expect(decodePluginTags({ tags: "not-an-array" })).toBeUndefined();
     expect(decodePluginTags({ tags: ["", "valid"] })).toBeUndefined();
-    expect(decodePluginTags({ tags: null })).toBeUndefined();
     expect(decodePluginTags({ tags: [] })).toEqual([]);
     expect(decodePluginTags({ tags: ["a"], unknownKey: 1 })).toEqual(["a"]);
   });

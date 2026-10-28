@@ -633,6 +633,7 @@ test("keeps V2 tool calls and observations with their calling generations despit
   const contextInput = createPluginContext({
     sessionHook: sessionHooks.register,
     toolHook: toolHooks.register,
+    options: { tags: ["app:tags-test"] },
     subscribe: () => ({
       async *[Symbol.asyncIterator]() {
         try {
@@ -909,6 +910,14 @@ test("keeps V2 tool calls and observations with their calling generations despit
 
   expect(collectorErrors).toEqual([]);
   const tools = spans.filter((span) => span.name === "read");
+  expect(
+    spans.some((span) => {
+      const values = span.attributes.find(
+        (attribute) => attribute.key === "langfuse.trace.tags",
+      )?.value.arrayValue?.values;
+      return values?.length === 1 && values[0].stringValue === "app:tags-test";
+    }),
+  ).toBe(true);
   expect(tools).toHaveLength(calls.length);
   const generations = spans.filter(
     (span) => span.name === "opencode.generation",
@@ -1094,93 +1103,6 @@ test("omits V2 cost_details when OpenCode reports zero cost", async () => {
       ),
     ),
   ).toBe(false);
-});
-
-test("applies plugin option tags to exported spans", async () => {
-  const { spans, collectorErrors } = await createCollector();
-  const sessionID = Schema.decodeUnknownSync(SessionIDSchema)("v2-tags");
-  const assistantMessageID =
-    Schema.decodeUnknownSync(MessageIDSchema)("v2-tags-assistant");
-  const tokens = {
-    input: 10,
-    output: 5,
-    reasoning: 0,
-    cache: { read: 0, write: 0 },
-  };
-  const eventsFinished = Promise.withResolvers<undefined>();
-  const registration = { dispose: () => Promise.resolve() };
-  const sessionHooks = createHookRegistry<SessionHookInputs>();
-  const context = createPluginContext({
-    sessionHook: sessionHooks.register,
-    toolHook: () => Promise.resolve(registration),
-    options: { tags: ["app:tags-test"] },
-    subscribe: () => ({
-      async *[Symbol.asyncIterator]() {
-        try {
-          await sessionHooks.run("prompt", {
-            sessionID,
-            messageID:
-              Schema.decodeUnknownSync(MessageIDSchema)("v2-tags-user"),
-            prompt: { text: "Tag this trace" },
-            delivery: "steer",
-          });
-          yield {
-            id: "v2-tags-started",
-            durable: { aggregateID: sessionID, seq: 1, version: 1 as const },
-            type: "session.step.started",
-            created: Date.now(),
-            data: {
-              sessionID,
-              assistantMessageID,
-              agent: Agent.ID.make("build"),
-              model: {
-                id: Model.ID.make("test-model"),
-                providerID: Provider.ID.make("test-provider"),
-              },
-            },
-          };
-          yield {
-            id: "v2-tags-ended",
-            durable: { aggregateID: sessionID, seq: 2, version: 1 as const },
-            type: "session.step.ended",
-            created: Date.now(),
-            data: {
-              sessionID,
-              assistantMessageID,
-              finish: "stop",
-              cost: 0,
-              tokens,
-            },
-          };
-          yield {
-            id: "v2-tags-succeeded",
-            durable: { aggregateID: sessionID, seq: 3, version: 1 as const },
-            type: "session.execution.succeeded",
-            created: Date.now(),
-            data: { sessionID },
-          };
-        } finally {
-          eventsFinished.resolve(undefined);
-        }
-      },
-    }),
-  });
-
-  const cleanup = await LangfusePlugin.setup(context);
-  if (!cleanup) {
-    throw new Error("Expected plugin cleanup");
-  }
-  onTestFinished(cleanup);
-  await eventsFinished.promise;
-
-  expect(collectorErrors).toEqual([]);
-  const tagged = spans.filter((span) => {
-    const values = span.attributes.find(
-      (attribute) => attribute.key === "langfuse.trace.tags",
-    )?.value.arrayValue?.values;
-    return values?.length === 1 && values[0].stringValue === "app:tags-test";
-  });
-  expect(tagged.length).toBeGreaterThan(0);
 });
 
 test("links V2 child sessions prompted before their creation event to the parent trace", async () => {

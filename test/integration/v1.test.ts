@@ -158,6 +158,9 @@ let collectorBaseUrl: string;
 let collectorPort: number | undefined;
 let toolListCalls = 0;
 let toolListShouldFail = false;
+// Held open by a test to keep the next app.log call pending, the way a slow
+// round trip to the OpenCode server does.
+let pendingAppLog: Promise<void> | undefined;
 
 const startedAt = 1_750_000_000_000;
 
@@ -473,7 +476,11 @@ const createHooks = async (
   process.env.LANGFUSE_BASE_URL = baseUrl;
   const client = Schema.decodeUnknownSync(PluginClientSchema)({
     app: {
-      log: () => Promise.resolve(),
+      log: () => {
+        const pending = pendingAppLog ?? Promise.resolve();
+        pendingAppLog = undefined;
+        return pending;
+      },
     },
     session: {
       messages: ({ path }: { path: { id: string } }) =>
@@ -543,6 +550,7 @@ beforeEach(async () => {
   hooksDisposed = false;
   toolListCalls = 0;
   toolListShouldFail = false;
+  pendingAppLog = undefined;
   sessionMessagesShouldFail = false;
   server = createServer((request, response) => {
     const chunks: Buffer[] = [];
@@ -3267,6 +3275,77 @@ describe("built plugin", { concurrent: false }, () => {
         tools: expectedToolDefinitions,
       },
     ]);
+  });
+
+  test("keeps a turn that starts while the previous idle is still logging", async () => {
+    const sessionID = "idle-race-session";
+    const started = startedAt;
+
+    await sendUserMessage({
+      sessionID,
+      messageID: "idle-race-user-1",
+      text: "Read the README",
+      started,
+    });
+    await startGeneration({
+      id: "idle-race-step-1",
+      sessionID,
+      started: started + 100,
+    });
+    await completeGeneration({
+      sessionID,
+      userMessageID: "idle-race-user-1",
+      assistantMessageID: "idle-race-assistant-1",
+      started: started + 100,
+      completed: started + 500,
+      text: "The README describes the project",
+    });
+
+    const idleLog = Promise.withResolvers<undefined>();
+    pendingAppLog = idleLog.promise;
+    const requestCount = requests.length;
+    const firstIdle = emitEvent({
+      type: "session.idle",
+      properties: { sessionID },
+    });
+
+    await sendUserMessage({
+      sessionID,
+      messageID: "idle-race-user-2",
+      text: "Now summarize it",
+      started: started + 501,
+    });
+    idleLog.resolve(undefined);
+    await firstIdle;
+
+    await startGeneration({
+      id: "idle-race-step-2",
+      sessionID,
+      started: started + 600,
+    });
+    await completeGeneration({
+      sessionID,
+      userMessageID: "idle-race-user-2",
+      assistantMessageID: "idle-race-assistant-2",
+      started: started + 600,
+      completed: started + 900,
+      text: "A summary",
+    });
+    await emitEvent({ type: "session.idle", properties: { sessionID } });
+
+    const generations = requests
+      .slice(requestCount)
+      .flatMap(getSpans)
+      .filter((span) => span.name === "opencode.generation");
+
+    expect(
+      generations.map(
+        (span) =>
+          Schema.decodeUnknownSync(Schema.Struct({ messageID: Schema.String }))(
+            getJsonAttribute(span, "langfuse.observation.metadata"),
+          ).messageID,
+      ),
+    ).toContain("idle-race-assistant-2");
   });
 
   test("keeps the history complete when the plugin restarts mid-session", async () => {

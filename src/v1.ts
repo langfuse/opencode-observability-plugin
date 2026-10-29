@@ -64,8 +64,11 @@ const eventHook = (event: OpencodeEvent) =>
     };
 
     if (event.type === "session.idle") {
-      yield* log("info", "Flushing spans");
+      // Finalize before awaiting anything: the log call is an HTTP round trip
+      // to the server, and a prompt sent as this turn ends can start the next
+      // turn in that window, which finalizing afterwards would then end.
       finalizeSessionTracing(event.properties.sessionID);
+      yield* log("info", "Flushing spans");
 
       yield* langfuse.forceFlush;
     }

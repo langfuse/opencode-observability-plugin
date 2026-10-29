@@ -1,6 +1,6 @@
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 import type { Hooks } from "@opencode-ai/plugin";
-import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { createTraceState, SpanStatusCode, trace } from "@opentelemetry/api";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import type { Span as ApiSpan, Tracer } from "@opentelemetry/api";
 import type { Span, SpanProcessor } from "@opentelemetry/sdk-trace-base";
@@ -70,6 +70,19 @@ export class LangfuseClient {
     this.traceState.pendingUserMessageIdsBySession.clear();
   }
 
+  getActiveTraceContext(sessionID: string) {
+    const generation =
+      this.traceState.activeGenerationSteps.get(sessionID)?.span;
+    return {
+      turn: this.getTurnObservation(sessionID, undefined)?.span.spanContext(),
+      // A new turn clears the generation parent before its first step starts.
+      generation:
+        generation === this.traceState.generationParentSpans.get(sessionID)
+          ? generation?.spanContext()
+          : undefined,
+    };
+  }
+
   getTraceContext(sessionID: string, messageID: string | undefined) {
     const turn = this.getTurnObservation(sessionID, undefined);
     const generation =
@@ -85,6 +98,9 @@ export class LangfuseClient {
               traceId: turnContext.traceId,
               spanId: turnContext.spanId,
               traceFlags: turnContext.traceFlags,
+              ...(turnContext.traceState
+                ? { traceState: turnContext.traceState.serialize() }
+                : {}),
             },
           }
         : {}),
@@ -94,6 +110,9 @@ export class LangfuseClient {
               traceId: generationContext.traceId,
               spanId: generationContext.spanId,
               traceFlags: generationContext.traceFlags,
+              ...(generationContext.traceState
+                ? { traceState: generationContext.traceState.serialize() }
+                : {}),
             },
           }
         : {}),
@@ -109,16 +128,30 @@ export class LangfuseClient {
       input.context.turn &&
       !this.traceState.latestTurnObservationsBySession.has(input.sessionID)
     ) {
+      const { traceState, ...turn } = input.context.turn;
       this.traceState.latestTurnObservationsBySession.set(input.sessionID, {
         sessionID: input.sessionID,
-        span: trace.wrapSpanContext(input.context.turn),
+        span: trace.wrapSpanContext({
+          ...turn,
+          ...(traceState !== undefined && traceState !== ""
+            ? { traceState: createTraceState(traceState) }
+            : {}),
+        }),
       });
     }
     if (input.context.generation && input.messageID != null) {
       if (!this.traceState.generationSpansByMessageId.has(input.messageID)) {
+        const { traceState, ...generation } = input.context.generation;
         this.traceState.generationSpansByMessageId.set(
           input.messageID,
-          trace.wrapSpanContext(input.context.generation),
+          trace.wrapSpanContext({
+            ...generation,
+            ...(traceState !== undefined && traceState !== ""
+              ? {
+                  traceState: createTraceState(traceState),
+                }
+              : {}),
+          }),
         );
       }
     }

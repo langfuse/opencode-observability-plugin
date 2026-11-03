@@ -90,6 +90,12 @@ function createPluginContext(input: {
     string,
     Parameters<PluginContext["storage"]["set"]>[1]
   >();
+  const parentlessSession = Schema.decodeUnknownSync(
+    Schema.declare(
+      (value): value is Awaited<ReturnType<PluginContext["session"]["get"]>> =>
+        typeof value === "object" && value !== null && "parentID" in value,
+    ),
+  )({ parentID: undefined });
   const unexpectedApi = () => {
     throw new Error("The plugin used an unsupported mock host capability");
   };
@@ -98,7 +104,7 @@ function createPluginContext(input: {
     session: {
       hook: input.sessionHook,
       create: unexpectedApi,
-      get: input.getSession ?? unexpectedApi,
+      get: input.getSession ?? (() => Promise.resolve(parentlessSession)),
       switchAgent: unexpectedApi,
       switchModel: unexpectedApi,
       prompt: unexpectedApi,
@@ -274,6 +280,7 @@ const createHookRegistry = <Inputs extends object>() => {
     [Name in keyof Inputs]?: (input: Inputs[Name]) => Promise<void> | void;
   } = {};
   return {
+    hooks,
     register: <Name extends keyof Inputs>(
       name: Name,
       handler: (input: Inputs[Name]) => Promise<void> | void,
@@ -296,8 +303,300 @@ const createHookRegistry = <Inputs extends object>() => {
   };
 };
 
+describe("OpenCode 2 trace context propagation", () => {
+  test.each([undefined, "false"])(
+    "is disabled unless explicitly true (%j)",
+    async (value) => {
+      await createCollector();
+      vi.stubEnv("LANGFUSE_PROPAGATE_TRACE_CONTEXT", value);
+      const sessionHooks = createHookRegistry<SessionHookInputs>();
+      const toolHooks = createHookRegistry<ToolHookInputs>();
+      const context = createPluginContext({
+        sessionHook: sessionHooks.register,
+        toolHook: toolHooks.register,
+        subscribe: () => ({
+          async *[Symbol.asyncIterator]() {
+            await Promise.resolve();
+            yield* [];
+          },
+        }),
+      });
+      const register = vi.spyOn(context.session, "hook");
+      const cleanup = await LangfusePlugin.setup(context);
+      try {
+        expect(register.mock.calls.map(([name]) => name)).toEqual([
+          "prompt",
+          "context",
+        ]);
+        expect(sessionHooks.hooks["model.request"]).toBeUndefined();
+        expect(sessionHooks.hooks["http.request"]).toBeUndefined();
+        expect(sessionHooks.hooks["experimental.ws.handshake"]).toBeUndefined();
+      } finally {
+        await cleanup?.();
+      }
+    },
+  );
+
+  describe("enabled", () => {
+    beforeEach(() => {
+      vi.stubEnv("LANGFUSE_PROPAGATE_TRACE_CONTEXT", "true");
+    });
+
+    test("uses the turn parent even when asynchronous step events report an active generation", async () => {
+      const { spans, collectorErrors } = await createCollector();
+      const sessionHooks = createHookRegistry<SessionHookInputs>();
+      const toolHooks = createHookRegistry<ToolHookInputs>();
+      const sessionID =
+        Schema.decodeUnknownSync(SessionIDSchema)("v2-propagation");
+      const messageID = Schema.decodeUnknownSync(MessageIDSchema)(
+        "v2-propagation-user",
+      );
+      const assistantMessageID = Schema.decodeUnknownSync(MessageIDSchema)(
+        "v2-propagation-assistant",
+      );
+      const model = {
+        id: Model.ID.make("test-model"),
+        providerID: Provider.ID.make("test-provider"),
+      };
+      const agent = Agent.ID.make("build");
+      const eventsFinished = Promise.withResolvers<undefined>();
+
+      let initialRequest = new Request("https://example.com");
+      let turnRequest = new Request("https://example.com");
+      let generationRequest = new Request("https://example.com");
+      let afterStepRequest = new Request("https://example.com");
+      const wsHeaders: Record<string, string> = {};
+
+      const context = createPluginContext({
+        sessionHook: sessionHooks.register,
+        toolHook: toolHooks.register,
+        subscribe: () => ({
+          async *[Symbol.asyncIterator]() {
+            try {
+              // 1. Before prompt, no turn context exists
+              initialRequest = new Request("https://example.com");
+              await sessionHooks.run("http.request", {
+                sessionID,
+                agent,
+                model,
+                kind: "primary",
+                request: initialRequest,
+              });
+
+              // 2. Prompt starts the turn
+              await sessionHooks.run("prompt", {
+                sessionID,
+                messageID,
+                prompt: { text: "Hello" },
+                delivery: "steer",
+              });
+
+              turnRequest = new Request("https://example.com");
+              await sessionHooks.run("http.request", {
+                sessionID,
+                agent,
+                model,
+                kind: "primary",
+                request: turnRequest,
+              });
+
+              // 3. Step starts (generation active)
+              yield {
+                type: "session.step.started",
+                id: "step-start",
+                created: Date.now(),
+                durable: {
+                  aggregateID: sessionID,
+                  seq: 1,
+                  version: 1 as const,
+                },
+                data: { sessionID, assistantMessageID, agent, model },
+              };
+
+              generationRequest = new Request("https://example.com", {
+                headers: { "x-custom": "test" },
+              });
+              await sessionHooks.run("http.request", {
+                sessionID,
+                agent,
+                model,
+                kind: "primary",
+                request: generationRequest,
+              });
+
+              // 4. Step ends (falls back to turn context)
+              yield {
+                type: "session.step.ended",
+                id: "step-end",
+                created: Date.now(),
+                durable: {
+                  aggregateID: sessionID,
+                  seq: 2,
+                  version: 1 as const,
+                },
+                data: {
+                  sessionID,
+                  assistantMessageID,
+                  finish: "stop",
+                  cost: 0,
+                  tokens: {
+                    input: 10,
+                    output: 5,
+                    reasoning: 0,
+                    cache: { read: 0, write: 0 },
+                  },
+                },
+              };
+
+              afterStepRequest = new Request("https://example.com");
+              await sessionHooks.run("http.request", {
+                sessionID,
+                agent,
+                model,
+                kind: "primary",
+                request: afterStepRequest,
+              });
+
+              await sessionHooks.run("experimental.ws.handshake", {
+                sessionID,
+                agent,
+                model,
+                kind: "primary",
+                url: "wss://example.com",
+                headers: wsHeaders,
+              });
+
+              yield {
+                id: "v2-succeeded",
+                durable: {
+                  aggregateID: sessionID,
+                  seq: 3,
+                  version: 1 as const,
+                },
+                type: "session.execution.succeeded",
+                created: Date.now(),
+                data: { sessionID },
+              };
+            } finally {
+              eventsFinished.resolve(undefined);
+            }
+          },
+        }),
+      });
+
+      const cleanup = await LangfusePlugin.setup(context);
+      if (!cleanup) {
+        throw new Error("Expected plugin cleanup");
+      }
+      onTestFinished(cleanup);
+      expect(sessionHooks.hooks["model.request"]).toBeUndefined();
+      await eventsFinished.promise;
+
+      expect(initialRequest.headers.get("traceparent")).toBeNull();
+
+      const turn = spans.find((span) => span.name === "opencode.turn");
+      expect.assert(turn);
+      expect(turnRequest.headers.get("traceparent")).toBe(
+        `00-${turn.traceId}-${turn.spanId}-01`,
+      );
+
+      const generationSpan = spans.find(
+        (span) => span.name === "opencode.generation",
+      );
+      expect.assert(generationSpan);
+      expect(generationRequest.headers.get("x-custom")).toBe("test");
+      expect(generationRequest.headers.get("traceparent")).toBe(
+        `00-${turn.traceId}-${turn.spanId}-01`,
+      );
+      expect(generationSpan.traceId).toBe(turn.traceId);
+      expect(generationSpan.parentSpanId).toBe(turn.spanId);
+
+      expect(afterStepRequest.headers.get("traceparent")).toBe(
+        `00-${turn.traceId}-${turn.spanId}-01`,
+      );
+      expect(wsHeaders.traceparent).toBe(
+        `00-${turn.traceId}-${turn.spanId}-01`,
+      );
+
+      const completedRequest = new Request("https://example.com");
+      await sessionHooks.run("http.request", {
+        sessionID,
+        agent,
+        model,
+        kind: "primary",
+        request: completedRequest,
+      });
+      expect(completedRequest.headers.get("traceparent")).toBeNull();
+
+      expect(collectorErrors).toEqual([]);
+    });
+
+    test("preserves existing traceparent on http.request Request object", async () => {
+      await createCollector();
+      const sessionHooks = createHookRegistry<SessionHookInputs>();
+      const toolHooks = createHookRegistry<ToolHookInputs>();
+      const sessionID =
+        Schema.decodeUnknownSync(SessionIDSchema)("v2-preserve-req");
+      const messageID = Schema.decodeUnknownSync(MessageIDSchema)(
+        "v2-preserve-req-user",
+      );
+      const model = {
+        id: Model.ID.make("test-model"),
+        providerID: Provider.ID.make("test-provider"),
+      };
+      const agent = Agent.ID.make("build");
+
+      const context = createPluginContext({
+        sessionHook: sessionHooks.register,
+        toolHook: toolHooks.register,
+        subscribe: () => ({
+          async *[Symbol.asyncIterator]() {
+            await Promise.resolve();
+            yield* [];
+          },
+        }),
+      });
+
+      const cleanup = await LangfusePlugin.setup(context);
+      try {
+        await sessionHooks.run("prompt", {
+          sessionID,
+          messageID,
+          prompt: { text: "Hello" },
+          delivery: "steer",
+        });
+
+        const existingParent =
+          "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01";
+        const request = new Request(
+          "https://api.openai.com/v1/chat/completions",
+          {
+            method: "POST",
+            headers: {
+              traceparent: existingParent,
+              tracestate: "vendor=value",
+            },
+          },
+        );
+        await sessionHooks.run("http.request", {
+          sessionID,
+          agent,
+          model,
+          kind: "primary",
+          request,
+        });
+        expect(request.headers.get("traceparent")).toBe(existingParent);
+        expect(request.headers.get("tracestate")).toBe("vendor=value");
+      } finally {
+        await cleanup?.();
+      }
+    });
+  });
+});
+
 test("restores durable parents for in-flight tools, later tools, and generation continuations after replacement", async () => {
   const { spans, collectorErrors } = await createCollector();
+  vi.stubEnv("LANGFUSE_PROPAGATE_TRACE_CONTEXT", "true");
   const sessionHooks = createHookRegistry<SessionHookInputs>();
   const toolHooks = createHookRegistry<ToolHookInputs>();
   const admitted = Promise.withResolvers<undefined>();
@@ -394,6 +693,14 @@ test("restores durable parents for in-flight tools, later tools, and generation 
   ).toBe("string");
   // Disposal cleared the shared client's parent maps, so restoration must use storage.
   const secondCleanup = await LangfusePlugin.setup(context);
+  const restoredRequest = new Request("https://example.com");
+  await sessionHooks.run("http.request", {
+    sessionID,
+    agent,
+    model,
+    kind: "primary",
+    request: restoredRequest,
+  });
   await toolHooks.run("execute.after", {
     ...call,
     status: "completed",
@@ -416,10 +723,13 @@ test("restores durable parents for in-flight tools, later tools, and generation 
   );
   expect(generations).toHaveLength(2);
   const turn = spans.find((span) => span.name === "opencode.turn");
-  expect(turn).toBeDefined();
+  expect.assert(turn);
+  expect(restoredRequest.headers.get("traceparent")).toBe(
+    `00-${turn.traceId}-${turn.spanId}-01`,
+  );
   for (const generation of generations) {
-    expect(generation.parentSpanId).toBe(turn?.spanId);
-    expect(generation.traceId).toBe(turn?.traceId);
+    expect(generation.parentSpanId).toBe(turn.spanId);
+    expect(generation.traceId).toBe(turn.traceId);
   }
   const completedTools = spans.filter(
     (span) =>
@@ -1314,6 +1624,11 @@ vi.mock("../../src/runtime.js", async (importOriginal) => {
   };
 });
 
+const emptyStorage = {
+  get: () => Promise.resolve(undefined),
+  set: () => Promise.resolve(),
+};
+
 describe("OpenCode 2 package entrypoint", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1345,6 +1660,7 @@ describe("OpenCode 2 package entrypoint", () => {
     const contextInput: unknown = {
       app: { version: "2.0.4" },
       options: {},
+      storage: emptyStorage,
       session: { hook: vi.fn(() => Promise.resolve(registration)) },
       tool: { hook: vi.fn(() => Promise.resolve(registration)) },
       event: {
@@ -1448,7 +1764,7 @@ describe("OpenCode 2 package entrypoint", () => {
           sessionID: string;
           messageID: string;
           prompt: { text: string };
-        }) => void)
+        }) => Promise<void> | void)
       | undefined;
     let executeBefore:
       | ((input: {
@@ -1457,7 +1773,7 @@ describe("OpenCode 2 package entrypoint", () => {
           sessionID: string;
           tool: string;
           input: unknown;
-        }) => void)
+        }) => Promise<void> | void)
       | undefined;
     let releaseStep: (() => void) | undefined;
     const toolCalled = new Promise<void>((resolve) => {
@@ -1468,7 +1784,9 @@ describe("OpenCode 2 package entrypoint", () => {
     const contextInput: unknown = {
       app: { version: "2.0.4" },
       options: {},
+      storage: emptyStorage,
       session: {
+        get: () => Promise.resolve({ parentID: undefined }),
         hook: vi.fn((name: string, handler: typeof prompt) => {
           if (name === "prompt") {
             prompt = handler;
@@ -1549,7 +1867,7 @@ describe("OpenCode 2 package entrypoint", () => {
     await vi.waitFor(() => {
       expect(prompt).toBeTypeOf("function");
     });
-    prompt?.({
+    await prompt?.({
       sessionID: "session-1",
       messageID: "user-1",
       prompt: { text: "Say hello" },
@@ -1561,7 +1879,7 @@ describe("OpenCode 2 package entrypoint", () => {
       expect(runtime.startActiveGenerationStep).toHaveBeenCalled();
     });
     await reasoningReceived.promise;
-    executeBefore?.({
+    await executeBefore?.({
       id: "call-1",
       messageID: "assistant-1",
       sessionID: "session-1",
@@ -1618,6 +1936,7 @@ describe("OpenCode 2 package entrypoint", () => {
       const contextInput: unknown = {
         app: { version: "2.0.4" },
         options: {},
+        storage: emptyStorage,
         session: { hook: vi.fn(() => Promise.resolve(registration)) },
         tool: {
           hook: vi.fn((name: string, handler: typeof executeBefore) => {

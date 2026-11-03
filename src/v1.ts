@@ -14,6 +14,7 @@ import {
   NativeToolResultSchema,
   type OpencodeEvent,
 } from "./schema.js";
+import { injectTraceContext } from "./trace-context.js";
 import { log } from "./utils.js";
 
 const refreshSessionHistory = (sessionID: string) =>
@@ -402,6 +403,24 @@ const main = (tags: string[] | undefined) =>
         ),
 
       event: ({ event }) => runHook("event", eventHook(event)),
+
+      ...(process.env.LANGFUSE_PROPAGATE_TRACE_CONTEXT === "true"
+        ? ({
+            "chat.headers": (input, output) =>
+              runHook(
+                "chat.headers",
+                Effect.sync(() => {
+                  injectTraceContext(
+                    output.headers,
+                    langfuse.getActiveTraceContext(input.sessionID),
+                    // OpenCode merges model headers and SDK provider defaults
+                    // outside chat.headers; do not override their traceparent.
+                    [input.model.headers, input.provider.options.headers],
+                  );
+                }),
+              ),
+          } satisfies Pick<Hooks, "chat.headers">)
+        : {}),
 
       "chat.message": (input, output) =>
         runHook(

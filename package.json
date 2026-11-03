@@ -60,6 +60,7 @@
       "@langfuse/otel!",
       "@opentelemetry/api!",
       "@opentelemetry/context-async-hooks!",
+      "@opentelemetry/core!",
       "@opentelemetry/resources!",
       "@opentelemetry/sdk-trace-node!",
       "effect!"
@@ -84,6 +85,7 @@
     "@opencode/plugin": "^2.0.4",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/context-async-hooks": "^2.10.0",
+    "@opentelemetry/core": "^2.10.0",
     "@opentelemetry/resources": "^2.10.0",
     "@opentelemetry/sdk-trace-base": "^2.10.0",
     "@opentelemetry/sdk-trace-node": "^2.10.0",

@@ -4,6 +4,7 @@ import { Effect, Schema } from "effect";
 
 import type { ToolDefinition } from "./langfuse.js";
 import { createLangfuseRuntime, decodePluginTags } from "./runtime.js";
+import { injectTraceContext } from "./trace-context.js";
 import { PLUGIN_VERSION } from "./version.js";
 
 const SpanContextSchema = Schema.Struct({
@@ -13,6 +14,7 @@ const SpanContextSchema = Schema.Struct({
     Schema.isInt(),
     Schema.isBetween({ minimum: 0, maximum: 255 }),
   ),
+  traceState: Schema.optional(Schema.String),
 });
 const TraceContextSchema = Schema.fromJsonString(
   Schema.Struct({
@@ -117,9 +119,20 @@ const LangfusePlugin = {
         );
       }
     };
+    const removeStoredTurn = async (sessionID: string) => {
+      try {
+        await ctx.storage.remove(`${traceStoragePrefix}/${sessionID}/turn`);
+      } catch (error) {
+        console.warn(
+          `Langfuse parent context cleanup failed: ${String(error)}`,
+        );
+      }
+    };
 
     const abort = new AbortController();
     const registrations: { dispose: () => Promise<void> }[] = [];
+    const propagateTraceContext =
+      process.env.LANGFUSE_PROPAGATE_TRACE_CONTEXT === "true";
     const userMessageIDs = new Map<string, string>();
     const resolvedSessionParents = new Set<string>();
     const generationDetails = new Map<
@@ -190,6 +203,33 @@ const LangfusePlugin = {
         });
       }),
     );
+
+    if (propagateTraceContext) {
+      const propagate = async (
+        sessionID: string,
+        headers: Parameters<typeof injectTraceContext>[0],
+      ) => {
+        await restoreTraceContext(sessionID, undefined);
+        injectTraceContext(headers, {
+          turn: langfuse.getActiveTraceContext(sessionID).turn,
+          // V2 prepares requests before step.started, and events arrive asynchronously.
+          // Without an assistant message ID, an active generation can be the previous
+          // step (or an unrelated primary request when preparing a title).
+          generation: undefined,
+        });
+      };
+      registrations.push(
+        await ctx.session.hook("http.request", (input) =>
+          propagate(input.sessionID, input.request.headers),
+        ),
+      );
+
+      registrations.push(
+        await ctx.session.hook("experimental.ws.handshake", (input) =>
+          propagate(input.sessionID, input.headers),
+        ),
+      );
+    }
 
     registrations.push(
       await ctx.tool.hook("execute.before", async (input) => {
@@ -416,6 +456,9 @@ const LangfusePlugin = {
                 generationDetails.delete(messageID);
               }
             }
+            if (propagateTraceContext) {
+              await removeStoredTurn(event.data.sessionID);
+            }
             await Effect.runPromise(langfuse.forceFlush);
           }
 
@@ -430,6 +473,9 @@ const LangfusePlugin = {
               if (details.sessionID === event.data.sessionID) {
                 generationDetails.delete(messageID);
               }
+            }
+            if (propagateTraceContext) {
+              await removeStoredTurn(event.data.sessionID);
             }
             await Effect.runPromise(langfuse.forceFlush);
           }

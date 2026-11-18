@@ -506,6 +506,55 @@ test.each([
   ).toMatchObject({ content: "/project" });
 });
 
+test.each([
+  { exit: 1, content: "boom", message: "exit code 1\nboom", isError: true },
+  { exit: 127, content: "", message: "exit code 127", isError: true },
+  { exit: 0, content: "fine", message: undefined, isError: false },
+])(
+  "traces a V2 shell result with exit code $exit as an error only when it is non-zero",
+  async ({ exit, content, message, isError }) => {
+    const { spans, collectorErrors } = await createCollector();
+    const sessionHooks = createHookRegistry<SessionHookInputs>();
+    const toolHooks = createHookRegistry<ToolHookInputs>();
+    const context = createPluginContext({
+      sessionHook: sessionHooks.register,
+      toolHook: toolHooks.register,
+      subscribe: () => ({
+        async *[Symbol.asyncIterator]() {
+          await Promise.resolve();
+          yield* [];
+        },
+      }),
+    });
+    const cleanup = await LangfusePlugin.setup(context);
+    const call = {
+      id: CallID.make(`shell-exit-${exit.toString()}`),
+      sessionID: Schema.decodeUnknownSync(SessionIDSchema)(
+        `shell-exit-session-${exit.toString()}`,
+      ),
+      messageID: Schema.decodeUnknownSync(MessageIDSchema)(
+        `shell-exit-message-${exit.toString()}`,
+      ),
+      agent: Agent.ID.make("build"),
+      tool: "shell",
+      input: { command: "run" },
+    };
+    await toolHooks.run("execute.before", call);
+    await toolHooks.run("execute.after", {
+      ...call,
+      status: "completed",
+      result: { content, metadata: { exit } },
+    });
+    await cleanup?.();
+    expect(collectorErrors).toEqual([]);
+    const tool = spans.find((span) => span.name === "shell");
+    expect(tool?.status?.code === 2).toBe(isError);
+    if (isError) {
+      expect(tool?.status?.message).toBe(message);
+    }
+  },
+);
+
 test("keeps V2 tool calls and observations with their calling generations despite late and duplicate hooks", async () => {
   const { spans, collectorErrors } = await createCollector();
   const sessionHooks = createHookRegistry<SessionHookInputs>();

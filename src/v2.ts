@@ -4,6 +4,7 @@ import { Effect, Schema } from "effect";
 
 import type { ToolDefinition } from "./langfuse.js";
 import { createLangfuseRuntime, decodePluginTags } from "./runtime.js";
+import { exitFailureMessage } from "./utils.js";
 import { PLUGIN_VERSION } from "./version.js";
 
 const SpanContextSchema = Schema.Struct({
@@ -257,6 +258,19 @@ const LangfusePlugin = {
                 .filter((part) => part.type === "text")
                 .map((part) => part.text)
                 .join("\n\n");
+        const failure = exitFailureMessage(input.result.metadata, output);
+        if (failure !== undefined) {
+          langfuse.traceToolError({
+            sessionID: input.sessionID,
+            messageID: input.messageID,
+            callID: input.id,
+            tool: input.tool,
+            args: input.input,
+            error: failure,
+            completed: Date.now(),
+          });
+          return;
+        }
         langfuse.traceToolEnd({
           sessionID: input.sessionID,
           messageID: input.messageID,

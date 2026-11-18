@@ -14,7 +14,7 @@ import {
   NativeToolResultSchema,
   type OpencodeEvent,
 } from "./schema.js";
-import { log } from "./utils.js";
+import { exitFailureMessage, log } from "./utils.js";
 
 const refreshSessionHistory = (sessionID: string) =>
   Effect.gen(function* () {
@@ -116,17 +116,34 @@ const eventHook = (event: OpencodeEvent) =>
       }
 
       if (part.type === "tool" && part.state.status === "completed") {
-        langfuse.traceToolEnd({
-          sessionID: part.sessionID,
-          messageID: part.messageID,
-          callID: part.callID,
-          tool: part.tool,
-          args: part.state.input,
-          title: part.state.title,
-          output: part.state.output,
-          started: part.state.time.start,
-          completed: part.state.time.end,
-        });
+        const failure = exitFailureMessage(
+          part.state.metadata,
+          part.state.output,
+        );
+        if (failure === undefined) {
+          langfuse.traceToolEnd({
+            sessionID: part.sessionID,
+            messageID: part.messageID,
+            callID: part.callID,
+            tool: part.tool,
+            args: part.state.input,
+            title: part.state.title,
+            output: part.state.output,
+            started: part.state.time.start,
+            completed: part.state.time.end,
+          });
+        } else {
+          langfuse.traceToolError({
+            sessionID: part.sessionID,
+            messageID: part.messageID,
+            callID: part.callID,
+            tool: part.tool,
+            args: part.state.input,
+            error: failure,
+            started: part.state.time.start,
+            completed: part.state.time.end,
+          });
+        }
       }
 
       if (part.type === "tool" && part.state.status === "error") {
@@ -312,10 +329,14 @@ const normalizeToolResult = (tool: string, output: unknown) => {
     output,
   );
   if (Option.isSome(nativeResult)) {
+    const failure = exitFailureMessage(
+      nativeResult.value.metadata,
+      nativeResult.value.output,
+    );
     return {
       title: nativeResult.value.title,
-      output: nativeResult.value.output,
-      isError: false,
+      output: failure ?? nativeResult.value.output,
+      isError: failure !== undefined,
       unexpected: false,
     };
   }

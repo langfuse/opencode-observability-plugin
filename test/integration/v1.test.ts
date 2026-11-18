@@ -1419,6 +1419,143 @@ describe("built plugin", { concurrent: false }, () => {
     ).toEqual([{ role: "assistant", content: "Parent result" }]);
   });
 
+  test("traces a shell command that exits non-zero as an error and one that exits zero as a success", async () => {
+    const sessionID = "shell-exit-code-session";
+    const userMessageID = "shell-exit-code-user";
+    const assistantMessageID = "shell-exit-code-assistant";
+    const started = startedAt;
+    const calls = [
+      { callID: "shell-exit-failed", output: "boom", exit: 1 },
+      { callID: "shell-exit-failed-silent", output: "", exit: 127 },
+      { callID: "shell-exit-ok", output: "fine", exit: 0 },
+    ];
+
+    await sendUserMessage({
+      sessionID,
+      messageID: userMessageID,
+      text: "Run three commands",
+      started,
+    });
+    await startAssistantMessage({
+      sessionID,
+      userMessageID,
+      assistantMessageID,
+      started: started + 100,
+    });
+    await startGeneration({
+      id: "shell-exit-code-step",
+      sessionID,
+      assistantMessageID,
+      started: started + 100,
+    });
+    for (const call of calls) {
+      await hooks["tool.execute.before"]?.(
+        { sessionID, callID: call.callID, tool: "bash" },
+        { args: { command: call.callID } },
+      );
+      await hooks["tool.execute.after"]?.(
+        {
+          sessionID,
+          callID: call.callID,
+          tool: "bash",
+          args: { command: call.callID },
+        },
+        {
+          title: call.callID,
+          output: call.output,
+          metadata: { exit: call.exit },
+        },
+      );
+    }
+    await completeGeneration({
+      sessionID,
+      userMessageID,
+      assistantMessageID,
+      started: started + 100,
+      completed: started + 500,
+    });
+
+    const { spans } = await flushSession(sessionID);
+    const byCall = (callID: string) =>
+      spans
+        .filter((span) => span.name === "bash")
+        .find(
+          (span) =>
+            (
+              getJsonAttribute(span, "langfuse.observation.output") as {
+                tool_call_id?: string;
+              }
+            ).tool_call_id === callID,
+        );
+    const failed = byCall("shell-exit-failed");
+    expect(failed?.status).toEqual({ code: 2, message: "exit code 1\nboom" });
+    expect(byCall("shell-exit-failed-silent")?.status).toEqual({
+      code: 2,
+      message: "exit code 127",
+    });
+    expect(byCall("shell-exit-ok")?.status?.code).not.toBe(2);
+  });
+
+  test("traces a completed shell part with a non-zero exit as an error when only the part event reports it", async () => {
+    const sessionID = "shell-exit-code-part-session";
+    const userMessageID = "shell-exit-code-part-user";
+    const assistantMessageID = "shell-exit-code-part-assistant";
+    const started = startedAt;
+
+    await sendUserMessage({
+      sessionID,
+      messageID: userMessageID,
+      text: "Run a command",
+      started,
+    });
+    await startAssistantMessage({
+      sessionID,
+      userMessageID,
+      assistantMessageID,
+      started: started + 100,
+    });
+    await startGeneration({
+      id: "shell-exit-code-part-step",
+      sessionID,
+      assistantMessageID,
+      started: started + 100,
+    });
+    await emitEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "shell-exit-part",
+          sessionID,
+          messageID: assistantMessageID,
+          type: "tool",
+          callID: "shell-exit-part-call",
+          tool: "bash",
+          state: {
+            status: "completed",
+            input: { command: "false" },
+            title: "false",
+            output: "nope",
+            metadata: { exit: 2 },
+            time: { start: started + 150, end: started + 170 },
+          },
+        },
+      },
+    });
+    await completeGeneration({
+      sessionID,
+      userMessageID,
+      assistantMessageID,
+      started: started + 100,
+      completed: started + 500,
+    });
+
+    const { spans } = await flushSession(sessionID);
+    expect(getSpan(spans, "bash").status).toEqual({
+      code: 2,
+      message: "exit code 2\nnope",
+    });
+  });
+
   test("parents each tool to the generation that requested it when lifecycle events arrive out of order", async () => {
     const sessionID = "out-of-order-tool-parenting-session";
     const userMessageID = "out-of-order-tool-parenting-user";

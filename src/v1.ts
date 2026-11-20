@@ -15,7 +15,7 @@ import {
   type OpencodeEvent,
 } from "./schema.js";
 import { injectTraceContext } from "./trace-context.js";
-import { log } from "./utils.js";
+import { formatError, log } from "./utils.js";
 
 const refreshSessionHistory = (sessionID: string) =>
   Effect.gen(function* () {
@@ -275,15 +275,16 @@ const eventHook = (event: OpencodeEvent) =>
   });
 
 const formatHookError = (error: unknown) => {
-  if (error instanceof Error) {
-    return error.stack ?? error.message;
+  const details = formatError(error);
+  if (!(error instanceof Error) || error.stack === undefined) {
+    return details;
   }
 
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
+  // The stack starts with the same "name: message" header that details already contains.
+  const header = String(error);
+  return error.stack.startsWith(header)
+    ? `${details}${error.stack.slice(header.length)}`
+    : `${details}\n${error.stack}`;
 };
 
 const flattenMcpContent = (content: readonly unknown[]) => {

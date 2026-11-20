@@ -2146,6 +2146,11 @@ export const createLangfuseClient = (input: {
     return new LangfuseClient({
       baseUrl: input.baseUrl,
       traceState,
-      forceFlush: Effect.tryPromise(() => processor.forceFlush()),
+      // Keep the exporter's rejection as-is; the default UnknownError wrapper
+      // hides the real reason (network code, HTTP status) behind a generic message.
+      forceFlush: Effect.tryPromise({
+        try: () => processor.forceFlush(),
+        catch: (cause) => cause,
+      }),
     });
   });

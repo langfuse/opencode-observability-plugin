@@ -1618,7 +1618,11 @@ vi.mock("../../src/runtime.js", async (importOriginal) => {
       runtime.createLangfuseRuntime(input);
       return Effect.succeed({
         ...runtime,
-        forceFlush: Effect.sync(runtime.forceFlush),
+        // Mirrors the default Effect.tryPromise wrapping, which hides the
+        // exporter rejection inside UnknownError.cause.
+        forceFlush: Effect.tryPromise(() =>
+          Promise.resolve(runtime.forceFlush()),
+        ),
       });
     },
   };
@@ -1756,6 +1760,109 @@ describe("OpenCode 2 package entrypoint", () => {
 
     expect(runtime.createLangfuseRuntime).toHaveBeenCalledTimes(2);
     expect(runtime.forceFlush).toHaveBeenCalledTimes(2);
+  });
+
+  test("keeps processing events and logs the real cause when a flush fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    onTestFinished(() => {
+      warn.mockRestore();
+      error.mockRestore();
+    });
+    const exportError = Object.assign(new Error("Forbidden"), {
+      name: "OTLPExporterError",
+      code: 403,
+      data: '{"error":"ForbiddenError"}',
+    });
+    runtime.forceFlush.mockRejectedValueOnce(exportError).mockRejectedValueOnce(
+      new Error("Timeout", {
+        cause: Object.assign(new Error("connect ECONNREFUSED"), {
+          code: "ECONNREFUSED",
+        }),
+      }),
+    );
+    runtime.traceEvent.mockImplementationOnce(() => {
+      throw new Error("trace event failed");
+    });
+    const registration = { dispose: vi.fn(() => Promise.resolve()) };
+    const contextInput: unknown = {
+      app: { version: "2.0.4" },
+      options: {},
+      storage: emptyStorage,
+      session: { hook: vi.fn(() => Promise.resolve(registration)) },
+      tool: { hook: vi.fn(() => Promise.resolve(registration)) },
+      event: {
+        subscribe: () => ({
+          async *[Symbol.asyncIterator]() {
+            await Promise.resolve();
+            yield {
+              type: "session.execution.succeeded",
+              data: { sessionID: "session-1" },
+            };
+            yield {
+              type: "session.retry.scheduled",
+              id: "retry-1",
+              created: 50,
+              data: { sessionID: "session-1", attempt: 1, error: "busy" },
+            };
+            yield {
+              type: "session.step.started",
+              created: 100,
+              data: {
+                sessionID: "session-1",
+                assistantMessageID: "assistant-1",
+                agent: "build",
+                model: { id: "model-1", providerID: "provider-1" },
+                snapshot: "snapshot-1",
+              },
+            };
+            yield {
+              type: "session.step.ended",
+              created: 200,
+              data: {
+                sessionID: "session-1",
+                assistantMessageID: "assistant-1",
+                finish: "stop",
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+              },
+            };
+          },
+        }),
+      },
+    };
+    const context = Schema.decodeUnknownSync(
+      Schema.declare(
+        (input): input is Parameters<typeof SourcePlugin.setup>[0] =>
+          typeof input === "object" && input !== null,
+      ),
+    )(contextInput);
+
+    const cleanup = await SourcePlugin.setup(context);
+    await expect(cleanup?.()).resolves.toBeUndefined();
+
+    expect(runtime.startActiveGenerationStep).toHaveBeenCalledTimes(1);
+    expect(runtime.traceGeneration).toHaveBeenCalledTimes(1);
+    expect(runtime.forceFlush).toHaveBeenCalledTimes(2);
+    expect(error).not.toHaveBeenCalled();
+    expect(warn.mock.calls).toEqual([
+      [
+        'Langfuse flush failed: UnknownError: An error occurred in Effect.tryPromise; caused by OTLPExporterError: Forbidden (code: 403, data: {"error":"ForbiddenError"})',
+      ],
+      [
+        "Langfuse event session.retry.scheduled handling failed: Error: trace event failed",
+      ],
+      [
+        "Langfuse flush failed: UnknownError: An error occurred in Effect.tryPromise; caused by Error: Timeout; caused by Error: connect ECONNREFUSED (code: ECONNREFUSED)",
+      ],
+    ]);
   });
 
   test("traces a complete session with prompt, text, reasoning, and tools", async () => {

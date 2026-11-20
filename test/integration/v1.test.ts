@@ -145,6 +145,7 @@ const originalEnvironment = {
   legacyBaseUrl: process.env.LANGFUSE_BASEURL,
   environment: process.env.LANGFUSE_ENVIRONMENT,
   userId: process.env.LANGFUSE_USER_ID,
+  propagateTraceContext: process.env.LANGFUSE_PROPAGATE_TRACE_CONTEXT,
 };
 
 const requests: CapturedRequest[] = [];
@@ -363,6 +364,76 @@ const startGeneration = async (input: {
       snapshot: input.snapshot,
     },
   });
+};
+
+const requestHeaders = async (
+  sessionID: string,
+  headers: Record<string, string> = {},
+  configured: {
+    modelHeaders?: Record<string, string>;
+    providerHeaders?: Record<string, string>;
+  } = {},
+) => {
+  await hooks["chat.headers"]?.(
+    {
+      sessionID,
+      agent: "build",
+      model: {
+        id: "test-model",
+        providerID: "test-provider",
+        api: { id: "test-model", url: "https://example.com", npm: "test-sdk" },
+        name: "Test model",
+        capabilities: {
+          temperature: true,
+          reasoning: false,
+          attachment: false,
+          toolcall: true,
+          input: {
+            text: true,
+            audio: false,
+            image: false,
+            video: false,
+            pdf: false,
+          },
+          output: {
+            text: true,
+            audio: false,
+            image: false,
+            video: false,
+            pdf: false,
+          },
+        },
+        cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+        limit: { context: 1000, output: 100 },
+        status: "active",
+        options: {},
+        headers: configured.modelHeaders ?? {},
+      },
+      provider: {
+        source: "custom",
+        info: {
+          id: "test-provider",
+          name: "Test",
+          source: "custom",
+          env: [],
+          options: {},
+          models: {},
+        },
+        options: { headers: configured.providerHeaders },
+      },
+      // chat.headers receives the user message, not the assistant generation ID.
+      message: {
+        id: `${sessionID}-user`,
+        sessionID,
+        role: "user",
+        time: { created: startedAt },
+        agent: "build",
+        model: { providerID: "test-provider", modelID: "test-model" },
+      },
+    },
+    { headers },
+  );
+  return headers;
 };
 
 const startAssistantMessage = async (input: {
@@ -602,6 +673,7 @@ beforeEach(async () => {
   process.env.LANGFUSE_ENVIRONMENT = "integration-test";
   process.env.LANGFUSE_USER_ID = "test-user";
   delete process.env.LANGFUSE_BASEURL;
+  delete process.env.LANGFUSE_PROPAGATE_TRACE_CONTEXT;
 
   const builtPluginUrl = new URL("../../dist/v1/index.js", import.meta.url);
   const builtPlugin: unknown = await import(builtPluginUrl.href);
@@ -633,6 +705,7 @@ afterAll(() => {
     LANGFUSE_BASEURL: originalEnvironment.legacyBaseUrl,
     LANGFUSE_ENVIRONMENT: originalEnvironment.environment,
     LANGFUSE_USER_ID: originalEnvironment.userId,
+    LANGFUSE_PROPAGATE_TRACE_CONTEXT: originalEnvironment.propagateTraceContext,
   })) {
     if (value === undefined) {
       Reflect.deleteProperty(process.env, name);
@@ -640,6 +713,196 @@ afterAll(() => {
       process.env[name] = value;
     }
   }
+});
+
+describe("OpenCode 1 trace context propagation", () => {
+  test.each([undefined, "false"])(
+    "is disabled unless explicitly true (%j)",
+    async (value) => {
+      if (value !== undefined) {
+        process.env.LANGFUSE_PROPAGATE_TRACE_CONTEXT = value;
+      }
+      await disposeHooks();
+      hooksDisposed = false;
+      hooks = await createHooks(collectorBaseUrl);
+      expect(hooks["chat.headers"]).toBeUndefined();
+      await sendUserMessage({
+        sessionID: "disabled",
+        messageID: "disabled-user",
+        text: "Hello",
+        started: startedAt,
+      });
+      expect(await requestHeaders("disabled")).toEqual({});
+      const { spans } = await flushSession("disabled");
+      expect(getSpan(spans, "opencode.turn")).toBeDefined();
+    },
+  );
+
+  describe("enabled", () => {
+    beforeEach(async () => {
+      process.env.LANGFUSE_PROPAGATE_TRACE_CONTEXT = "true";
+      await disposeHooks();
+      hooksDisposed = false;
+      hooks = await createHooks(collectorBaseUrl);
+      expect(hooks["chat.headers"]).toBeTypeOf("function");
+    });
+
+    test("reuses exported generation and turn contexts across concurrent sessions", async () => {
+      const sessions = ["propagation-a", "propagation-b"];
+      const results = await Promise.all(
+        sessions.map(async (sessionID) => {
+          await sendUserMessage({
+            sessionID,
+            messageID: `${sessionID}-user`,
+            text: "Hello",
+            started: startedAt,
+          });
+          const turnHeaders = await requestHeaders(sessionID);
+          await startAssistantMessage({
+            sessionID,
+            userMessageID: `${sessionID}-user`,
+            assistantMessageID: `${sessionID}-assistant`,
+            started: startedAt + 1,
+          });
+          const generationHeaders = await requestHeaders(sessionID, {
+            "x-existing": "keep",
+          });
+          await completeGeneration({
+            sessionID,
+            userMessageID: `${sessionID}-user`,
+            assistantMessageID: `${sessionID}-assistant`,
+            started: startedAt + 1,
+            completed: startedAt + 2,
+          });
+          // The completed generation remains available for tool parenting, but
+          // must not parent the next outgoing LLM request.
+          const afterGeneration = await requestHeaders(sessionID);
+          return { sessionID, turnHeaders, generationHeaders, afterGeneration };
+        }),
+      );
+      await disposeHooks();
+      const spans = requests.flatMap(getSpans);
+      for (const result of results) {
+        const turn = getSessionSpan(spans, "opencode.turn", result.sessionID);
+        const generation = getSessionSpan(
+          spans,
+          "opencode.generation",
+          result.sessionID,
+        );
+        expect(result.turnHeaders.traceparent).toBe(
+          `00-${turn.traceId}-${turn.spanId}-01`,
+        );
+        expect(result.generationHeaders).toEqual({
+          "x-existing": "keep",
+          traceparent: `00-${generation.traceId}-${generation.spanId}-01`,
+        });
+        expect(result.afterGeneration).toEqual(result.turnHeaders);
+        expect(generation.traceId).toBe(turn.traceId);
+        expect(generation.parentSpanId).toBe(turn.spanId);
+        expect(await requestHeaders(result.sessionID)).toEqual({});
+      }
+      expect(results[0].generationHeaders.traceparent.split("-")[1]).not.toBe(
+        results[1].generationHeaders.traceparent.split("-")[1],
+      );
+      expect(
+        spans.filter((span) => span.name === "opencode.generation"),
+      ).toHaveLength(2);
+    });
+
+    test("uses the new turn while an earlier generation is still being finalized", async () => {
+      const sessionID = "new-turn";
+      await sendUserMessage({
+        sessionID,
+        messageID: "old-user",
+        text: "First turn",
+        started: startedAt,
+      });
+      await startGeneration({
+        id: "old-step",
+        sessionID,
+        assistantMessageID: "old-assistant",
+        started: startedAt + 1,
+      });
+      const previous = await requestHeaders(sessionID);
+      await sendUserMessage({
+        sessionID,
+        messageID: "new-user",
+        text: "Next turn",
+        started: startedAt + 2,
+      });
+      const current = await requestHeaders(sessionID);
+      const { spans } = await flushSession(sessionID);
+      const turn = spans.find(
+        (span) =>
+          span.name === "opencode.turn" &&
+          span.traceId === current.traceparent.split("-")[1],
+      );
+      expect.assert(turn);
+      expect(current.traceparent).toBe(`00-${turn.traceId}-${turn.spanId}-01`);
+      expect(current.traceparent.split("-")[1]).not.toBe(
+        previous.traceparent.split("-")[1],
+      );
+      expect(await requestHeaders(sessionID)).toEqual({});
+    });
+
+    test("does not use a host span or create spans when the session has no context", async () => {
+      const provider = new NodeTracerProvider();
+      provider.register();
+      const hostSpan = provider.getTracer("host").startSpan("host");
+      try {
+        await context.with(
+          trace.setSpan(context.active(), hostSpan),
+          async () => {
+            expect(await requestHeaders("unknown-session")).toEqual({});
+          },
+        );
+        await disposeHooks();
+        expect(requests.flatMap(getSpans)).toEqual([]);
+      } finally {
+        hostSpan.end();
+        context.disable();
+        trace.disable();
+        await provider.shutdown();
+      }
+    });
+
+    test("preserves existing trace headers", async () => {
+      const name = "TraceParent";
+      await sendUserMessage({
+        sessionID: "existing",
+        messageID: "existing-user",
+        text: "Hello",
+        started: startedAt,
+      });
+      const headers = {
+        [name]: "00-11111111111111111111111111111111-2222222222222222-00",
+        tracestate: "vendor=value",
+      };
+      expect(await requestHeaders("existing", { ...headers })).toEqual(headers);
+    });
+
+    test.each(["modelHeaders", "providerHeaders"] as const)(
+      "preserves traceparent configured in %s outside the hook output",
+      async (source) => {
+        await sendUserMessage({
+          sessionID: "configured",
+          messageID: "configured-user",
+          text: "Hello",
+          started: startedAt,
+        });
+        const headers = {
+          TraceParent:
+            "00-11111111111111111111111111111111-2222222222222222-00",
+        };
+        expect(
+          await requestHeaders("configured", {}, { [source]: headers }),
+        ).toEqual({});
+        expect(headers.TraceParent).toBe(
+          "00-11111111111111111111111111111111-2222222222222222-00",
+        );
+      },
+    );
+  });
 });
 
 describe("built plugin", { concurrent: false }, () => {

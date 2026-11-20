@@ -14,7 +14,8 @@ import {
   NativeToolResultSchema,
   type OpencodeEvent,
 } from "./schema.js";
-import { log } from "./utils.js";
+import { injectTraceContext } from "./trace-context.js";
+import { formatError, log } from "./utils.js";
 
 const refreshSessionHistory = (sessionID: string) =>
   Effect.gen(function* () {
@@ -274,15 +275,16 @@ const eventHook = (event: OpencodeEvent) =>
   });
 
 const formatHookError = (error: unknown) => {
-  if (error instanceof Error) {
-    return error.stack ?? error.message;
+  const details = formatError(error);
+  if (!(error instanceof Error) || error.stack === undefined) {
+    return details;
   }
 
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
+  // The stack starts with the same "name: message" header that details already contains.
+  const header = String(error);
+  return error.stack.startsWith(header)
+    ? `${details}${error.stack.slice(header.length)}`
+    : `${details}\n${error.stack}`;
 };
 
 const flattenMcpContent = (content: readonly unknown[]) => {
@@ -402,6 +404,24 @@ const main = (tags: string[] | undefined) =>
         ),
 
       event: ({ event }) => runHook("event", eventHook(event)),
+
+      ...(process.env.LANGFUSE_PROPAGATE_TRACE_CONTEXT === "true"
+        ? ({
+            "chat.headers": (input, output) =>
+              runHook(
+                "chat.headers",
+                Effect.sync(() => {
+                  injectTraceContext(
+                    output.headers,
+                    langfuse.getActiveTraceContext(input.sessionID),
+                    // OpenCode merges model headers and SDK provider defaults
+                    // outside chat.headers; do not override their traceparent.
+                    [input.model.headers, input.provider.options.headers],
+                  );
+                }),
+              ),
+          } satisfies Pick<Hooks, "chat.headers">)
+        : {}),
 
       "chat.message": (input, output) =>
         runHook(
